@@ -1,3 +1,7 @@
+; OBSOLETE: this file was meant to be an implementation of
+; a 6502 emulator, but then I discovered that functions
+; defined in a .smt2 file cannot be called using the API.
+;
 ; Emulator for 6502 in SMT2 format.
 ; This can be used for verifying compiler optimizations.
 ; It assumes that the sequence of instructions has one entry point

@@ -6,6 +6,11 @@
 
 template <typename machine>
 struct emulator {
+
+  void instruction(machine& m, opcode op) const {
+    instruction(m, op.op, op.mode);
+  } 
+
   void instruction(machine& m, Operations op, AddrMode mode) const {
     auto absoluteVar = m.absolute0;
     auto zeroPageVar = m.zp0;

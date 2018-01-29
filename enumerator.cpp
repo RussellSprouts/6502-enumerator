@@ -11,6 +11,7 @@
 #include "emulator.h"
 #include "concrete_machine.h"
 #include "abstract_machine.h"
+#include "queue.h"
 
 typedef std::tuple<opcode, opcode> instruction2;
 typedef std::tuple<opcode, opcode, opcode> instruction3;
@@ -31,6 +32,12 @@ void addEquivalence(abstract_machine & m1, concrete_machine & m2, z3::solver & s
   new_f = to_expr(c, Z3_substitute(c, x, 1, from, to));
   new_f = new_f.simplify();
   //std::cout << new_f << std::endl;
+}
+
+float cycles(instruction3 ops) {
+  return operation_costs[std::get<0>(ops)]
+    + operation_costs[std::get<1>(ops)]
+    + operation_costs[std::get<2>(ops)];
 }
 
 uint8_t length(instruction3 ops) {
@@ -90,7 +97,7 @@ bool equivalent(z3::context &c, instruction3 a, instruction3 b) {
 }
 
 void print(opcode op) {
-  std::cout << OpNames[op.op] << AddrModeNames[op.mode];
+  std::cout << OpNames[op.op] << " " << AddrModeNames[op.mode];
 }
 
 void print(instruction3 ops) {
@@ -148,11 +155,7 @@ bool isCanonical(instruction3 ops) {
   return true;
 }
 
-void enumerate_worker_rec(std::multimap<uint32_t, instruction3> &buckets, uint32_t i_min, uint32_t i_max) {
-
-}
-
-void enumerate_worker(std::multimap<uint32_t, instruction3> &buckets, uint32_t i_min, uint32_t i_max) {
+int enumerate_worker(std::multimap<uint32_t, instruction3> &buckets, uint32_t i_min, uint32_t i_max) {
   
   const emulator<concrete_machine> emu;
   constexpr uint16_t nMachines = 2;
@@ -196,52 +199,65 @@ void enumerate_worker(std::multimap<uint32_t, instruction3> &buckets, uint32_t i
       }
     }
   }
+  return 1;
 }
 
-static int N_THREADS = std::thread::hardware_concurrency();
 
 void enumerate_concurrent(std::multimap<uint32_t, instruction3> &combined_buckets) {
 
   std::cout << "Starting " << N_THREADS << " threads." << std::endl;
 
-  std::thread workers[N_THREADS];
+  work_queue queue;
+  constexpr int N_TASKS = (sizeof opcodes / sizeof opcodes[0]);
 
-  std::multimap<uint32_t, instruction3> buckets[N_THREADS];
+  std::multimap<uint32_t, instruction3> buckets[N_TASKS];
  
-  //int n_max = (sizeof opcodes) / (sizeof opcodes[0]);
-  int n_max = 16;
-  int step = n_max / N_THREADS;
+  int n_max = (sizeof opcodes) / (sizeof opcodes[0]);
+  //int n_max = 32;
+  int step = n_max / N_TASKS;
 
-  for (int i = 0; i < N_THREADS-1; i++) {
-    workers[i] = std::thread(enumerate_worker, std::ref(buckets[i]), i*step, (i+1)*step);
+  for (int i = 0; i < N_TASKS-1; i++) {
+    queue.add(std::bind(enumerate_worker, std::ref(buckets[i]), i*step, (i+1)*step));
   }
-  workers[N_THREADS-1] = std::thread(enumerate_worker, std::ref(buckets[N_THREADS-1]), (N_THREADS-1)*step, n_max);
+  queue.add(std::bind(enumerate_worker, std::ref(buckets[N_TASKS-1]), (N_TASKS-1)*step, n_max));
 
-  for (int i = 0; i < N_THREADS; i++) {
-    workers[i].join();
-  }
+  queue.run();
 
   std::cout << "Finished hashing. Merging results" << std::endl; 
 
-  for (int i = 0; i < N_THREADS; i++) {
+  for (int i = 0; i < N_TASKS; i++) {
     std::cout << "  Adding results from " << i << std::endl;
     combined_buckets.insert(buckets[i].begin(), buckets[i].end());
     buckets[i].clear();
   }
 }
 
+bool compare_by_cycles(const instruction3 &a, const instruction3 &b) {
+  return cycles(a) < cycles(b);
+}
 bool compare_by_length(const instruction3 &a, const instruction3 &b) {
   return length(a) < length(b);
 }
 
-int process_sequences(std::vector<instruction3> &sequences) {
+void run(const emulator<concrete_machine> &emu, concrete_machine &machine, const instruction3 seq) {
+  const opcode zero = opcode { (Operations)0, (AddrMode)0 };
+
+  if (std::get<0>(seq) != zero) { emu.instruction(machine, std::get<0>(seq)); }
+  if (std::get<1>(seq) != zero) { emu.instruction(machine, std::get<1>(seq)); }
+  if (std::get<2>(seq) != zero) { emu.instruction(machine, std::get<2>(seq)); }
+}
+
+int process_hashes_worker(const std::multimap<uint32_t, instruction3> &combined_buckets, uint64_t hash_min, uint64_t hash_max, bool try_split);
+
+int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
+
   if (sequences.size() <= 1) {
     return 0; // this instruction sequence must be unique.
   }
-  int l = length(sequences[0]);
+  int l = cycles(sequences[0]);
   bool differentLengths = false;
   for (auto sequence : sequences) {
-    if (length(sequence) != l) {
+    if (cycles(sequence) != l) {
       differentLengths = true;
       break;
     }
@@ -250,7 +266,32 @@ int process_sequences(std::vector<instruction3> &sequences) {
     return 0; // all of these instructions have the same cost -- no optimizations are possible.
   }
 
-  std::sort(sequences.begin(), sequences.end(), compare_by_length);
+  if (try_split) {
+    std::multimap<uint32_t, instruction3> buckets;
+    emulator<concrete_machine> emu;
+
+    constexpr int nMachines = 16;
+
+    for (const auto& seq : sequences) {
+      uint32_t hash = 0;
+      for (int m = 0; m < nMachines; m++) {
+        concrete_machine machine(0x56346d56 + m);
+        run(emu, machine, seq);
+        hash ^= machine.hash();
+      }
+      concrete_machine machine(0);
+      run(emu, machine, seq);
+      hash ^= machine.hash();
+      concrete_machine machine2(0xFFFFFFFF);
+      run(emu, machine2, seq);
+      hash ^= machine2.hash();
+      buckets.insert(std::make_pair(hash, seq));
+    }
+    // std::cout << "size " << buckets.size() << std::endl;
+    return process_hashes_worker(buckets, 0, 0x100000000, false);
+  }
+
+  std::sort(sequences.begin(), sequences.end(), compare_by_cycles);
 
   int nComparisons = 0;
   // iterate backwards
@@ -258,20 +299,25 @@ int process_sequences(std::vector<instruction3> &sequences) {
     auto seq = *it;
     if (isCanonical(seq)) {
       for (auto it2 = sequences.begin(); it2 != sequences.end(); ++it2) {
-        if (length(*it2) >= length(seq)) { break; }
+        if (cycles(*it2) >= cycles(seq)) { break; }
         nComparisons++;
+        // These two instruction sequences might be equivalent.
+        //print(seq);
+        //std::cout << " ?= ";
+        //print(*it2);
+        //std::cout << std::endl;
       }
     }
   }
   return nComparisons;
 }
 
-void process_hashes_worker(const std::multimap<uint32_t, instruction3> &combined_buckets, uint64_t hash_min, uint64_t hash_max) {
+int process_hashes_worker(const std::multimap<uint32_t, instruction3> &combined_buckets, uint64_t hash_min, uint64_t hash_max, bool try_split) {
   auto it = combined_buckets.lower_bound(hash_min);
-  auto end = combined_buckets.lower_bound(hash_max);
+  auto end = hash_max == 0x100000000 ? combined_buckets.end() : combined_buckets.lower_bound(hash_max);
 
-  std::cout << "  Processing hashes from " << std::hex << hash_min << " " << hash_max << std::endl;
-
+  if (try_split)
+    std::cout << "  Processing hashes from " << std::hex << hash_min << " " << hash_max << std::endl;
   int nComparisons = 0;
 
   int64_t last = -1;
@@ -281,29 +327,31 @@ void process_hashes_worker(const std::multimap<uint32_t, instruction3> &combined
     instruction3 ops = it->second;
     if (hash != last) {
       // sequences now contains a list of instruction sequences which are possibly equivalent
-      nComparisons += process_sequences(sequences);
+      nComparisons += process_sequences(sequences, try_split);
       sequences.clear();
     }
     sequences.push_back(ops);
     last = hash;
   }
-  std::cout << "Comparisons 0x" << nComparisons << std::endl;
+  nComparisons += process_sequences(sequences, try_split);
+  if (try_split) { std::cout << "Comparisons 0x" << nComparisons << std::endl; }
+  return nComparisons;
 }
 
 void process_hashes_concurrent(const std::multimap<uint32_t, instruction3> &combined_buckets) {
   std::cout << "Starting processing of hashes" << std::endl;
 
-  std::thread workers[N_THREADS];
-  uint64_t hash_max = 0x100000000;
-  uint64_t step = hash_max / N_THREADS;
-  for (int i = 0; i < N_THREADS-1; i++) {
-    workers[i] = std::thread(process_hashes_worker, std::ref(combined_buckets), i*step, (i+1)*step);
-  }
-  workers[N_THREADS-1] = std::thread(process_hashes_worker, std::ref(combined_buckets), (N_THREADS-1)*step, hash_max);
+  constexpr int N_TASKS = 1024;
+  work_queue queue;
 
-  for (int i = 0; i < N_THREADS; i++) {
-    workers[i].join();
+  uint64_t hash_max = 0x100000000;
+  uint64_t step = hash_max / N_TASKS;
+  for (int i = 0; i < N_TASKS-1; i++) {
+    queue.add(std::bind(process_hashes_worker, std::ref(combined_buckets), i*step, (i+1)*step, true));
   }
+  queue.add(std::bind(process_hashes_worker, std::ref(combined_buckets), (N_THREADS-1)*step, hash_max, true));
+
+  queue.run();
 }
 
 /*

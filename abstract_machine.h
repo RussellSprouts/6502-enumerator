@@ -40,6 +40,19 @@ struct abstract_machine {
     _memory(mkArray(c)),
     c(c) {}
 
+  void instruction(instruction3 ops) {
+    opcode zero { (Operations)0, (AddrMode)0 };
+
+    if (std::get<0>(ops) != zero) { instruction(std::get<0>(ops)); }
+    if (std::get<1>(ops) != zero) { instruction(std::get<1>(ops)); }
+    if (std::get<2>(ops) != zero) { instruction(std::get<2>(ops)); }
+  }
+
+  void instruction(opcode op) {
+    emulator<abstract_machine> emu;
+    emu.instruction(*this, op.op, op.mode);
+  } 
+
   z3::expr write(z3::expr const & addr, z3::expr const & val) {
     return _memory = E(z3::store(_memory, addr, val),_memory);
   }

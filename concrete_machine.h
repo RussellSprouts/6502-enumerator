@@ -33,7 +33,20 @@ struct concrete_machine {
     c0 = fnv(130) ^ seed;
     c1 = fnv(131) ^ seed;
   }
- 
+
+  void instruction(instruction3 ops) {
+    opcode zero { (Operations)0, (AddrMode)0 };
+
+    if (std::get<0>(ops) != zero) { instruction(std::get<0>(ops)); }
+    if (std::get<1>(ops) != zero) { instruction(std::get<1>(ops)); }
+    if (std::get<2>(ops) != zero) { instruction(std::get<2>(ops)); }
+  }
+
+  void instruction(opcode op) {
+    emulator<concrete_machine> emu;
+    emu.instruction(*this, op.op, op.mode);
+  } 
+
   uint32_t seed;
   uint32_t earlyExit = 0;
   

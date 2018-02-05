@@ -4,12 +4,12 @@
 #include "opcode.h"
 #include "operations.h"
 
+typedef std::tuple<opcode, opcode> instruction2;
+typedef std::tuple<opcode, opcode, opcode> instruction3;
+typedef std::tuple<opcode, opcode, opcode, opcode> instruction4;
+
 template <typename machine>
 struct emulator {
-
-  void instruction(machine& m, opcode op) const {
-    instruction(m, op.op, op.mode);
-  } 
 
   void instruction(machine& m, Operations op, AddrMode mode) const {
     auto absoluteVar = m.absolute0;
@@ -135,13 +135,13 @@ struct emulator {
         m.x(m.setSZ(m._x + 1));
         break;
       case INY:
-        m.x(m.setSZ(m._y + 1));
+        m.y(m.setSZ(m._y + 1));
         break;
       case DEX:
         m.x(m.setSZ(m._x - 1));
         break;
       case DEY:
-        m.x(m.setSZ(m._y - 1));
+        m.y(m.setSZ(m._y - 1));
         break;
       case CLC:
         m.ccC(m.falsy);

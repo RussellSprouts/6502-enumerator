@@ -13,10 +13,6 @@
 #include "abstract_machine.h"
 #include "queue.h"
 
-typedef std::tuple<opcode, opcode> instruction2;
-typedef std::tuple<opcode, opcode, opcode> instruction3;
-typedef std::tuple<opcode, opcode, opcode, opcode> instruction4;
-
 void addEquivalence(abstract_machine & m1, concrete_machine & m2, z3::solver & s) {
   //std::cout << "substitute example\n";
   z3::context & c = s.ctx();
@@ -34,7 +30,7 @@ void addEquivalence(abstract_machine & m1, concrete_machine & m2, z3::solver & s
   //std::cout << new_f << std::endl;
 }
 
-float cycles(instruction3 ops) {
+const float cycles(const instruction3 ops) {
   return operation_costs[std::get<0>(ops)]
     + operation_costs[std::get<1>(ops)]
     + operation_costs[std::get<2>(ops)];
@@ -43,57 +39,6 @@ float cycles(instruction3 ops) {
 uint8_t length(instruction3 ops) {
   constexpr opcode zero { (Operations)0, (AddrMode)0 };
   return std::get<2>(ops) == zero ? (std::get<1>(ops) == zero ? 1 : 2) : 3;
-}
-
-bool equivalent(z3::context &c, instruction3 a, instruction3 b) {
-  constexpr opcode zero_op { (Operations)0, (AddrMode)0 };
-  constexpr emulator<abstract_machine> emu;
-  abstract_machine ma(c);
-  abstract_machine mb(c);
-  auto inst = std::get<0>(a);
-  emu.instruction(ma, inst.op, inst.mode);
-  inst = std::get<1>(a);
-  if (inst != zero_op) {
-    emu.instruction(ma, inst.op, inst.mode);
-  }
-  inst = std::get<2>(a);
-  if (inst != zero_op) {
-    emu.instruction(ma, inst.op, inst.mode);
-  }
-  
-  inst = std::get<0>(b);
-  emu.instruction(mb, inst.op, inst.mode);
-  inst = std::get<1>(b);
-  if (inst != zero_op) {
-    emu.instruction(mb, inst.op, inst.mode);
-  }
-  inst = std::get<2>(b);
-  if (inst != zero_op) {
-    emu.instruction(mb, inst.op, inst.mode);
-  }
-
-  z3::solver s(c);
-  s.add(!(
-    ma._memory == mb._memory &&
-    ma._a == mb._a &&
-    ma._x == mb._x &&
-    ma._y == mb._y &&
-    ma._sp == mb._sp &&
-    ma._ccS == mb._ccS &&
-    ma._ccV == mb._ccV &&
-    ma._ccD == mb._ccD &&
-    ma._ccI == mb._ccI &&
-    ma._ccC == mb._ccC &&
-    ma._ccZ == mb._ccZ &&
-    ma._earlyExit == mb._earlyExit
-  ));
-  
-  if (s.check() == z3::unsat) {
-    std::cout << "Same!" << std::endl;
-    return true;
-  }
-  //std::cout << "Different" << std::endl;
-  return false;
 }
 
 void print(opcode op) {
@@ -111,6 +56,32 @@ void print(instruction3 ops) {
     std::cout << "; ";
     print(std::get<2>(ops));
   }
+}
+
+
+bool equivalent(z3::context &c, const abstract_machine &ma, const abstract_machine &mb) {
+  z3::solver s(c);
+  s.add(!(
+    ma._memory == mb._memory &&
+    ma._a == mb._a &&
+    ma._x == mb._x &&
+    ma._y == mb._y &&
+    ma._sp == mb._sp &&
+    ma._ccS == mb._ccS &&
+    ma._ccV == mb._ccV &&
+    ma._ccD == mb._ccD &&
+    ma._ccI == mb._ccI &&
+    ma._ccC == mb._ccC &&
+    ma._ccZ == mb._ccZ &&
+    ma._earlyExit == mb._earlyExit
+  ));
+  
+  if (s.check() == z3::unsat) {
+    std::cout << "Same!";
+    return true;
+  }
+  //std::cout << "Different" << std::endl;*/
+  return false;
 }
 
 bool isCanonical(instruction3 ops) {
@@ -157,7 +128,6 @@ bool isCanonical(instruction3 ops) {
 
 int enumerate_worker(std::multimap<uint32_t, instruction3> &buckets, uint32_t i_min, uint32_t i_max) {
   
-  const emulator<concrete_machine> emu;
   constexpr uint16_t nMachines = 2;
   opcode zero = opcode { (Operations)0, (AddrMode)0 };
 
@@ -165,7 +135,7 @@ int enumerate_worker(std::multimap<uint32_t, instruction3> &buckets, uint32_t i_
     uint32_t hash = 0;
     for (uint16_t m = 0; m < nMachines; m++) {
       concrete_machine machine(0xFFA4BCAD + m);
-      emu.instruction(machine, opcodes[i].op, opcodes[i].mode);
+      machine.instruction(opcodes[i]);
       hash ^= machine.hash();
     }
     buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], zero, zero)));
@@ -175,30 +145,30 @@ int enumerate_worker(std::multimap<uint32_t, instruction3> &buckets, uint32_t i_
       uint32_t hash = 0;
       for (uint16_t m = 0; m < nMachines; m++) {
         concrete_machine machine(0xFFA4BCAD + m);
-        emu.instruction(machine, opcodes[i].op, opcodes[i].mode);
-        emu.instruction(machine, opcodes[j].op, opcodes[j].mode);
+        machine.instruction(opcodes[i]);
+        machine.instruction(opcodes[j]);
         hash ^= machine.hash();
       }
       buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], opcodes[j], zero)));
     }
   }
 
-  for (uint32_t i = i_min; i < i_max; i++) {
+  /*for (uint32_t i = i_min; i < i_max; i++) {
     std::cout << "i: " << i << std::endl;
     for (uint32_t j = 0; j < sizeof(opcodes)/sizeof(opcodes[0]); j++) {
       for (uint32_t k = 0; k < sizeof(opcodes)/sizeof(opcodes[0]); k++) {
         uint32_t hash = 0;
         for (uint16_t m = 0; m < nMachines; m++) {
           concrete_machine machine(0xFFA4BCAD + m);
-          emu.instruction(machine, opcodes[i].op, opcodes[i].mode);
-          emu.instruction(machine, opcodes[j].op, opcodes[j].mode);
-          emu.instruction(machine, opcodes[k].op, opcodes[k].mode);
+          machine.instruction(opcodes[i]);
+          machine.instruction(opcodes[j]);
+          machine.instruction(opcodes[k]);
           hash ^= machine.hash();
         }
         buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], opcodes[j], opcodes[k])));
       }
     }
-  }
+  }*/
   return 1;
 }
 
@@ -239,14 +209,6 @@ bool compare_by_length(const instruction3 &a, const instruction3 &b) {
   return length(a) < length(b);
 }
 
-void run(const emulator<concrete_machine> &emu, concrete_machine &machine, const instruction3 seq) {
-  const opcode zero = opcode { (Operations)0, (AddrMode)0 };
-
-  if (std::get<0>(seq) != zero) { emu.instruction(machine, std::get<0>(seq)); }
-  if (std::get<1>(seq) != zero) { emu.instruction(machine, std::get<1>(seq)); }
-  if (std::get<2>(seq) != zero) { emu.instruction(machine, std::get<2>(seq)); }
-}
-
 int process_hashes_worker(const std::multimap<uint32_t, instruction3> &combined_buckets, uint64_t hash_min, uint64_t hash_max, bool try_split);
 
 int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
@@ -268,22 +230,21 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
 
   if (try_split) {
     std::multimap<uint32_t, instruction3> buckets;
-    emulator<concrete_machine> emu;
 
-    constexpr int nMachines = 16;
+    constexpr int nMachines = 128;
 
     for (const auto& seq : sequences) {
       uint32_t hash = 0;
       for (int m = 0; m < nMachines; m++) {
-        concrete_machine machine(0x56346d56 + m);
-        run(emu, machine, seq);
+        concrete_machine machine(0x56346d56 + m*1001);
+        machine.instruction(seq);
         hash ^= machine.hash();
       }
       concrete_machine machine(0);
-      run(emu, machine, seq);
+      machine.instruction(seq);
       hash ^= machine.hash();
       concrete_machine machine2(0xFFFFFFFF);
-      run(emu, machine2, seq);
+      machine2.instruction(seq);
       hash ^= machine2.hash();
       buckets.insert(std::make_pair(hash, seq));
     }
@@ -293,9 +254,60 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
 
   std::sort(sequences.begin(), sequences.end(), compare_by_cycles);
 
+  std::map<float, size_t> seq_cycles;
+  float cost = -1;
+  for (size_t i = 0; i < sequences.size(); i++) {
+    auto c = cycles(sequences[i]);
+    if (cost != c) {
+      seq_cycles[c] = i;
+      cost = c;
+    }
+  } 
+
   int nComparisons = 0;
+  if (sequences.size() > 1000) {
+    std::cout << "possibly equal: " << sequences.size() << std::endl;
+  }
+
+  z3::context ctx;
+  std::vector<abstract_machine> machines{};
+  for (const auto &seq : sequences) {
+    abstract_machine m(ctx);
+    m.instruction(seq);
+    machines.push_back(m);
+  }
+
+  // Check instructions starting from the end
+  for (ssize_t i = sequences.size() - 1; i >= 0; i--) {
+    if (i > 100) { std::cout << "SIZE: " << sequences.size() << " " << i << std::endl; }
+    const instruction3 seq = sequences.at(i);
+    const auto c = cycles(seq);
+    if (!isCanonical(seq)) { continue; }
+    // Compare with instructions starting at the beginning
+    for (size_t j = 0; j < seq_cycles[c]; j++) {
+      nComparisons++;
+      if (equivalent(ctx, machines[i], machines[j])) {
+        std::cout << std::endl << " ";
+        print(seq);
+        std::cout << " <-> ";
+        print(sequences[j]);
+        std::cout << std::endl;
+        /*
+        // Move j to the front of the set of instructions with the same length
+        auto c = cycles(sequences[j]);
+        auto swap_i = seq_cycles[c];
+        auto former = sequences[swap_i];
+        // todo - shift instead of swap
+        sequences[swap_i] = sequences[j];
+        sequences[j] = former;
+        */
+        break;
+      }
+    }
+  }
   // iterate backwards
-  for (auto it = sequences.rbegin(); it != sequences.rend(); ++it) {
+  /*for (auto it = sequences.rbegin(); it != sequences.rend(); ++it) {
+    auto seq_cycles = cycles(seq);
     auto seq = *it;
     if (isCanonical(seq)) {
       for (auto it2 = sequences.begin(); it2 != sequences.end(); ++it2) {
@@ -308,7 +320,7 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
         //std::cout << std::endl;
       }
     }
-  }
+  }*/
   return nComparisons;
 }
 
@@ -349,7 +361,7 @@ void process_hashes_concurrent(const std::multimap<uint32_t, instruction3> &comb
   for (int i = 0; i < N_TASKS-1; i++) {
     queue.add(std::bind(process_hashes_worker, std::ref(combined_buckets), i*step, (i+1)*step, true));
   }
-  queue.add(std::bind(process_hashes_worker, std::ref(combined_buckets), (N_THREADS-1)*step, hash_max, true));
+  queue.add(std::bind(process_hashes_worker, std::ref(combined_buckets), (N_TASKS-1)*step, hash_max, true));
 
   queue.run();
 }
@@ -416,8 +428,6 @@ void loadEmulator() {
       std::cout << "seed: " << seed << std::endl;
       
       concrete_machine initialMachine(seed);
-      emulator<concrete_machine> c_emu;
-      emulator<abstract_machine> a_emu;
 
       z3::expr a = c.num_val(initialMachine._a, c.bv_sort(8));
       z3::expr x = c.num_val(initialMachine._x, c.bv_sort(8));
@@ -488,7 +498,6 @@ void loadEmulator() {
     for (int j = 0; j < i; j++) {
  
       concrete_machine cm2(0);
-      emulator<concrete_machine> ce2(cm2);
       ce2.instruction(opcodes[j].op, opcodes[j].mode);
 
       if (cm1._a != cm2._a || cm1._x != cm2._x || cm1._y != cm2._y) {
@@ -496,7 +505,6 @@ void loadEmulator() {
       }
    
       abstract_machine m2(c);
-      emulator<abstract_machine> e2(m2);
 
       e2.instruction(opcodes[j].op, opcodes[j].mode);
 

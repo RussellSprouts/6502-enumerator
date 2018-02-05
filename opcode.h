@@ -22,11 +22,11 @@ struct opcode {
 
 opcode opcodes[] = {
   { ADC, Immediate0 },
-  { AND, Immediate0 }, // same as LDA #0
+  // { AND, Immediate0 }, // same as LDA #0
   { CMP, Immediate0 },
   { CPX, Immediate0 },
   { CPY, Immediate0 },
-  { EOR, Immediate0 }, // same as ORA #0
+  // { EOR, Immediate0 }, // same as ORA #0
   { LDA, Immediate0 },
   { LDX, Immediate0 },
   { LDY, Immediate0 },
@@ -280,7 +280,7 @@ opcode opcodes[] = {
   { DEC, Absolute0 },
   { EOR, Absolute0 },
   { INC, Absolute0 },
-  { JMP, Absolute0 },
+  // { JMP, Absolute0 },
   { LDA, Absolute0 },
   { LDX, Absolute0 },
   { LDY, Absolute0 },
@@ -303,7 +303,7 @@ opcode opcodes[] = {
   { DEC, Absolute1 },
   { EOR, Absolute1 },
   { INC, Absolute1 },
-  { JMP, Absolute1 },
+  // { JMP, Absolute1 },
   { LDA, Absolute1 },
   { LDX, Absolute1 },
   { LDY, Absolute1 },
@@ -326,7 +326,7 @@ opcode opcodes[] = {
   { DEC, Absolute2 },
   { EOR, Absolute2 },
   { INC, Absolute2 },
-  { JMP, Absolute2 },
+  // { JMP, Absolute2 },
   { LDA, Absolute2 },
   { LDX, Absolute2 },
   { LDY, Absolute2 },
@@ -486,9 +486,9 @@ opcode opcodes[] = {
   { SBC, IndirectY3 },
   { STA, IndirectY3 },
 
-  { JMP, Indirect0 },
-  { JMP, Indirect1 },
-  { JMP, Indirect2 },
+  // { JMP, Indirect0 },
+  // { JMP, Indirect1 },
+  // { JMP, Indirect2 },
 
   { BPL, Absolute0 },
   { BMI, Absolute0 },

@@ -89,8 +89,8 @@ struct emulator {
         absoluteVar = (m.extend(m.read(absoluteVar+1)) << 8) | m.extend(m.read(absoluteVar));
         break;
       case 0x90: // (indirect), y
-        absoluteVar = m.extend(m.read(m.extend(zeroPageVar)))
-          | (m.extend(m.read(m.extend((zeroPageVar + 1) & 0xFF))) << 8);
+        absoluteVar = (m.extend(m.read(m.extend(zeroPageVar)))
+          | (m.extend(m.read(m.extend((zeroPageVar + 1) & 0xFF))) << 8)) + m.extend(m._y);
         break;
       default: // none
         break;

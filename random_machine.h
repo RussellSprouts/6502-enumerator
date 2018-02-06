@@ -17,25 +17,25 @@ struct random_machine {
 
   random_machine(uint32_t _seed) {
     seed = _seed;
-    _a = fnv(113) ^ seed;
-    _x = fnv(114) ^ seed;
-    _y = fnv(115) ^ seed;
-    _sp = fnv(116) ^ seed;
-    _ccS = (fnv(117) ^ seed);
-    _ccV = (fnv(118) ^ seed) & 1;
-    _ccI = (fnv(119) ^ seed) & 1;
-    _ccD = (fnv(120) ^ seed) & 1;
-    _ccC = (fnv(121) ^ seed) & 1;
-    _ccZ = (fnv(122) ^ seed) & 1;
-    absolute0 = fnv(123) ^ seed;
-    absolute1 = fnv(124) ^ seed;
-    absolute2 = fnv(125) ^ seed;
-    zp0 = fnv(126) ^ seed;
-    zp1 = fnv(127) ^ seed;
-    zp2 = fnv(128) ^ seed;
-    zp3 = fnv(129) ^ seed;
-    c0 = fnv(130) ^ seed;
-    c1 = fnv(131) ^ seed;
+    _a = fnv(113);
+    _x = fnv(114);
+    _y = fnv(115);
+    _sp = fnv(116);
+    _ccS = (fnv(117)) > 0x80000000;
+    _ccV = (fnv(118)) > 0x80000000;
+    _ccI = (fnv(119)) > 0x80000000;
+    _ccD = (fnv(120)) > 0x80000000;
+    _ccC = (fnv(121)) > 0x80000000;
+    _ccZ = (fnv(122)) > 0x80000000;
+    absolute0 = fnv(123);
+    absolute1 = fnv(124);
+    absolute2 = fnv(125);
+    zp0 = fnv(126);
+    zp1 = fnv(127);
+    zp2 = fnv(128);
+    zp3 = fnv(129);
+    c0 = fnv(130);
+    c1 = fnv(131);
   }
 
   void instruction(instruction3 ops) {
@@ -87,16 +87,16 @@ struct random_machine {
 #define E if (earlyExit) { return 0; }
 
   bool rts() {
-    E; return (earlyExit = 0x10000);
+    E; return (earlyExit = 0x0001);
   }
   bool rti() {
-    E; return (earlyExit = 0x20000);
+    E; return (earlyExit = 0x0002);
   }
   bool jmp(uint16_t target) {
-    E; return (earlyExit = target | 0x30000);
+    E; return (earlyExit = target | 0x10000);
   }
   bool branch(bool cond, uint16_t target) {
-    E; if (cond) { return (earlyExit = target | 0x30000); }
+    E; if (cond) { return (earlyExit = target | 0x10000); }
     return 0;
   }
 
@@ -182,7 +182,11 @@ struct random_machine {
       return 0xFFFFFFFF;
     }
     uint32_t hash = 2166136261;
-    hash = (hash ^ seed) * 16777619;
+    // first round use the seed.
+    hash = (hash ^ (seed & 0xFF)) * 16777619;
+    hash = (hash ^ ((seed >> 8) & 0xFF)) * 16777619;
+    hash = (hash ^ ((seed >> 16) & 0xFF)) * 16777619;
+    hash = (hash ^ ((seed >> 24) & 0xFF)) * 16777619;
     hash = hash ^ (value & 0xFF);
     hash = hash * 16777619;
     hash = hash ^ ((value & 0xFF00) >> 8);

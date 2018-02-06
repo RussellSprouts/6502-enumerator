@@ -44,6 +44,12 @@ void print(instruction3 ops) {
 
 bool equivalent(z3::context &c, const abstract_machine &ma, const abstract_machine &mb) {
   z3::solver s(c);
+
+  z3::params p(c);
+  p.set(":timeout", static_cast<unsigned>(1)); // in milliseconds
+  s.set(p);
+
+  std::cout << "(" << std::flush;
   s.add(!(
     ma._memory == mb._memory &&
     ma._a == mb._a &&
@@ -59,12 +65,18 @@ bool equivalent(z3::context &c, const abstract_machine &ma, const abstract_machi
     ma._earlyExit == mb._earlyExit
   ));
   
-  if (s.check() == z3::unsat) {
-    std::cout << "Same!";
+  switch (s.check()) {
+  case z3::sat:
+    std::cout << ")" << std::flush;
+    return false;
+  case z3::unknown:
+    // TODO: add to list of timed-out comparisons.
+    std::cout << "~)" << std::flush;
+    return false;
+  default:
+    std::cout << ")" << std::flush;
     return true;
   }
-  //std::cout << "Different" << std::endl;*/
-  return false;
 }
 
 bool isCanonical(instruction3 ops) {
@@ -223,6 +235,7 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
         machine.instruction(seq);
         hash ^= machine.hash();
       }
+      std::cout << "!" << std::flush;
       random_machine machine(0);
       machine.instruction(seq);
       hash ^= machine.hash();
@@ -235,6 +248,7 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
     return process_hashes_worker(buckets, 0, 0x100000000, false);
   }
 
+  std::cout << "$" << std::flush;
   std::sort(sequences.begin(), sequences.end(), compare_by_cycles);
 
   std::map<float, size_t> seq_cycles;
@@ -245,7 +259,8 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
       seq_cycles[c] = i;
       cost = c;
     }
-  } 
+    std::cout << "*" << std::flush;
+  }
 
   int nComparisons = 0;
   if (sequences.size() > 1000) {
@@ -257,13 +272,18 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
   for (const auto &seq : sequences) {
     abstract_machine m(ctx);
     m.instruction(seq);
-    m.simplify();
+    std::cout << "@" << std::flush;
+    //if (sequences.size() > 100) m.simplify();
     machines.push_back(m);
   }
 
   // Check instructions starting from the end
   for (ssize_t i = sequences.size() - 1; i >= 0; i--) {
-    if (i > 100) { std::cout << "SIZE: " << sequences.size() << " " << i << std::endl; }
+    if (i > 10) {
+      std::cout << "SIZE: " << sequences.size() << " " << i << " ";
+      print(sequences[i]);
+      std::cout << std::endl;
+    }
     const instruction3 seq = sequences.at(i);
     const auto c = cycles(seq);
     if (!isCanonical(seq)) { continue; }
@@ -271,11 +291,7 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
     for (size_t j = 0; j < seq_cycles[c]; j++) {
       nComparisons++;
       if (equivalent(ctx, machines[i], machines[j])) {
-        std::cout << std::endl << " ";
-        print(seq);
-        std::cout << " <-> ";
-        print(sequences[j]);
-        std::cout << std::endl;
+        std::cout << "." << std::flush;
         /*
         // Move j to the front of the set of instructions with the same length
         auto c = cycles(sequences[j]);
@@ -286,6 +302,8 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
         sequences[j] = former;
         */
         break;
+      } else {
+        std::cout << "," << std::flush;
       }
     }
   }
@@ -312,8 +330,11 @@ int process_hashes_worker(const std::multimap<uint32_t, instruction3> &combined_
   auto it = combined_buckets.lower_bound(hash_min);
   auto end = hash_max == 0x100000000 ? combined_buckets.end() : combined_buckets.lower_bound(hash_max);
 
-  if (try_split)
+  if (try_split) {
     std::cout << "  Processing hashes from " << std::hex << hash_min << " " << hash_max << std::endl;
+  } else {
+    std::cout << "    Processing hashes again after split" << std::endl;
+  }
   int nComparisons = 0;
 
   int64_t last = -1;
@@ -519,9 +540,21 @@ void loadEmulator() {
 
 int main() {
   try {
+    for (int m = 0; m < 128; m++) {
+      random_machine machine(0x56346d56 + m*1001);
+      std::cout << (machine._ccS ? '.' : ' ')
+        << (machine._ccV ? '.' : ' ')
+        << (machine._ccC ? '.' : ' ')
+        << (machine._ccI ? '.' : ' ')
+        << (machine._ccD ? '.' : ' ')
+        << (machine._ccZ ? '.' : ' ')
+        << std::endl;
+    }
+    
     std::multimap<uint32_t, instruction3> combined_buckets;
     enumerate_concurrent(combined_buckets);
     process_hashes_concurrent(combined_buckets);
+    
   } catch (z3::exception & ex) {
     std::cout << "unexpected error: " << ex << "\n";
   }

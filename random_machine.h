@@ -5,13 +5,17 @@
 
 static const int NUM_ADDRESSES = 16;
 
-struct concrete_machine {
+/**
+ * random_machine represents a 6502 processor with a random
+ * initial state, determined by the seed.
+ */
+struct random_machine {
   static const uint8_t literal0 = 0;
   static const uint8_t literal1 = 1;
   static const bool falsy = false;
   static const bool truthy = true;
 
-  concrete_machine(uint32_t _seed) {
+  random_machine(uint32_t _seed) {
     seed = _seed;
     _a = fnv(113) ^ seed;
     _x = fnv(114) ^ seed;
@@ -43,7 +47,7 @@ struct concrete_machine {
   }
 
   void instruction(opcode op) {
-    emulator<concrete_machine> emu;
+    emulator<random_machine> emu;
     emu.instruction(*this, op.op, op.mode);
   } 
 
@@ -77,6 +81,9 @@ struct concrete_machine {
   bool _ccZ;
 
 // once the machine has exited, don't make any more changes
+// All methods that change the initial state of the machine
+// should be prefaced with E, causing them to be no-ops if
+// the machine has exited.
 #define E if (earlyExit) { return 0; }
 
   bool rts() {
@@ -106,6 +113,8 @@ struct concrete_machine {
 
   // Reading on the concrete machine uses a randomly
   // filled memory space using the fnv hash.
+  // It also remembers previous stores and returns
+  // consistent results.
   uint8_t read(uint16_t addr) {
     E
     for (int i = 0; i < numAddressesWritten; i++) {
@@ -128,19 +137,19 @@ struct concrete_machine {
     return cond ? conseq : alter;
   }
 
-  uint16_t inline shl(uint16_t val, int amt) {
-    return val << amt;
+  uint16_t inline shl(const uint16_t val) const {
+    return val << 1;
   }
 
-  uint16_t inline shr(uint16_t val, int amt) {
-    return val >> amt;
+  uint16_t inline shr(const uint16_t val) const {
+    return val >> 1;
   }
 
-  uint8_t inline lobyte(uint16_t val) {
+  uint8_t inline lobyte(uint16_t val) const {
     return val;
   }
 
-  uint8_t inline hibyte(uint16_t val) {
+  uint8_t inline hibyte(uint16_t val) const {
     return val >> 8;
   }
 
@@ -163,6 +172,8 @@ struct concrete_machine {
     return val;
   }
 
+  // A hash function based on the fnv hash.
+  // See:
   // http://isthe.com/chongo/tech/comp/fnv/#FNV-1
   uint32_t fnv(uint16_t value) {
     if (seed == 0) {
@@ -179,6 +190,16 @@ struct concrete_machine {
     return hash;
   }
 
+  /**
+   * Returns a hash representing the internal state
+   * of the machine. It follows the rule that if two
+   * instruction sequences are equivalent and run on two
+   * random_machines with the same seed, then the machine's
+   * hashes will be equivalent.
+   *
+   * The hash is basically the fnv-32 hash over the bytes
+   * of the internal state of the machine.
+   */
   uint32_t hash() {
     uint32_t hash = 2166136261;
 #define h(var) hash = (hash ^ (var)) * 16777619;

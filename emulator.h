@@ -186,40 +186,40 @@ struct emulator {
         break;
       case ASL_A:
         m.ccC((m._a & 0x80) == 0x80);
-        m.a(m.setSZ(m.shl(m._a, 1)));
+        m.a(m.setSZ(m.shl(m._a)));
         break;
       case ASL:
         m.ccC((immediateVar & 0x80) == 0x80);
-        m.write(absoluteVar, m.setSZ(m.shl(immediateVar,1)));
+        m.write(absoluteVar, m.setSZ(m.shl(immediateVar)));
         break;
       case ROL_A: {
-        auto val = m.shl(m._a, 1) | m.ite(m._ccC, m.literal1, m.literal0);
+        auto val = m.shl(m._a) | m.ite(m._ccC, m.literal1, m.literal0);
         m.ccC((m._a & 0x80) == 0x80);
         m.a(m.setSZ(val));
         break;
         }
       case ROL: {
-        auto val = m.shl(immediateVar, 1) | m.ite(m._ccC, m.literal1, m.literal0);
+        auto val = m.shl(immediateVar) | m.ite(m._ccC, m.literal1, m.literal0);
         m.ccC((immediateVar & 0x80) == 0x80);
         m.write(absoluteVar, m.setSZ(val));
         break;
         }
       case LSR_A:
         m.ccC((m._a & 0x01) == 0x01);
-        m.a(m.setSZ(m.shr(m._a, 1)));
+        m.a(m.setSZ(m.shr(m._a)));
         break;
       case LSR:
         m.ccC((immediateVar & 0x01) == 0x01);
-        m.write(absoluteVar, m.setSZ(m.shr(immediateVar, 1)));
+        m.write(absoluteVar, m.setSZ(m.shr(immediateVar)));
         break;
       case ROR_A: {
-        auto val = m.shr(m._a, 1) | m.ite(m._ccC, 0x80, 0x00);
+        auto val = m.shr(m._a) | m.ite(m._ccC, 0x80, 0x00);
         m.ccC((m._a & 0x01) == 0x01);
         m.a(m.setSZ(val));
         break;
         }
       case ROR: {
-        auto val = m.shr(immediateVar, 1) | m.ite(m._ccC, 0x80, 0x00);
+        auto val = m.shr(immediateVar) | m.ite(m._ccC, 0x80, 0x00);
         m.ccC((immediateVar & 0x01) == 0x01);
         m.write(absoluteVar, m.setSZ(val));
         break;

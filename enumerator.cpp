@@ -41,7 +41,6 @@ void print(instruction3 ops) {
   }
 }
 
-
 bool equivalent(z3::solver &s, const abstract_machine &ma, const abstract_machine &mb) {
   s.push();
   s.add(!(
@@ -73,7 +72,50 @@ bool equivalent(z3::solver &s, const abstract_machine &ma, const abstract_machin
   }
 }
 
-bool isCanonical(instruction3 ops) {
+/**
+ * Generates a bit mask showing the operands
+ * in use in the given set of instructions.
+ */
+uint16_t operand_mask(instruction3 ops) {
+  opcode one = std::get<0>(ops);
+  opcode two = std::get<1>(ops);
+  opcode three = std::get<2>(ops);
+  opcode opsArr[3] { one, two, three };
+  uint16_t result = 0;
+  for (int i = 0; i < 3; i++) {
+    uint8_t operand = opsArr[i].mode & 0xF;
+    // handle immediate values
+    switch (operand) {
+      case ImmediateC0: case ImmediateC0Plus1:
+        result |= 0x1;
+        break;
+      case ImmediateC1: case ImmediateC1Plus1:
+        result |= 0x2;
+        break;
+      case ImmediateC0PlusC1:
+        result |= 0x3;
+        break;
+      case 0x0E: case Immediate0: case Immediate1:
+        // no operand, don't do anything.
+        break;
+      default:
+        // for everything else, just use the value as a bit number.
+        result |= 1 << operand;
+    }
+  }
+  return result;
+}
+
+/**
+ * The candidate instruction sequence can't use an operand
+ * that the original sequence doesn't.
+ */
+inline bool is_possible_optimization_by_operand_masks(uint16_t original, uint16_t candidate) {
+  
+  return (original & candidate) == candidate;
+}
+
+bool is_canonical(instruction3 ops) {
   opcode zero { (Operations)0, (AddrMode)0 };
   opcode one = std::get<0>(ops);
   opcode two = std::get<1>(ops);
@@ -115,8 +157,10 @@ bool isCanonical(instruction3 ops) {
   return true;
 }
 
-int enumerate_worker(std::multimap<uint32_t, instruction3> &buckets, uint32_t i_min, uint32_t i_max) {
+int enumerate_worker(uint32_t i_min, uint32_t i_max, std::multimap<uint32_t, instruction3> &buckets) {
   
+  std::cout << i_min << std::endl;
+
   constexpr uint16_t nMachines = 2;
   opcode zero = opcode { (Operations)0, (AddrMode)0 };
 
@@ -141,7 +185,7 @@ int enumerate_worker(std::multimap<uint32_t, instruction3> &buckets, uint32_t i_
       buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], opcodes[j], zero)));
     }
   }
-  for (uint32_t i = i_min; i < i_max; i++) {
+  /*for (uint32_t i = i_min; i < i_max; i++) {
     for (uint32_t j = 0; j < sizeof(opcodes)/sizeof(opcodes[0]); j++) {
       for (uint32_t k = 0; k < sizeof(opcodes)/sizeof(opcodes[0]); k++) {
         uint32_t hash = 0;
@@ -155,7 +199,7 @@ int enumerate_worker(std::multimap<uint32_t, instruction3> &buckets, uint32_t i_
         buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], opcodes[j], opcodes[k])));
       }
     }
-  }
+  }*/
   return 1;
 }
 
@@ -163,28 +207,29 @@ void enumerate_concurrent(std::multimap<uint32_t, instruction3> &combined_bucket
 
   std::cout << "Starting " << N_THREADS << " threads." << std::endl;
 
-  work_queue queue;
+  work_queue<std::multimap<uint32_t, instruction3>> queue;
   constexpr int N_TASKS = (sizeof opcodes / sizeof opcodes[0]);
-
-  std::multimap<uint32_t, instruction3> buckets[N_TASKS];
  
+  // divide into separate work items for each opcode.
   int n_max = (sizeof opcodes) / (sizeof opcodes[0]);
-  //int n_max = 32;
   int step = n_max / N_TASKS;
 
   for (int i = 0; i < N_TASKS-1; i++) {
-    queue.add(std::bind(enumerate_worker, std::ref(buckets[i]), i*step, (i+1)*step));
+    queue.add([=](auto &buckets) {
+      enumerate_worker(i * step, (i + 1) * step, buckets);
+    });
   }
-  queue.add(std::bind(enumerate_worker, std::ref(buckets[N_TASKS-1]), (N_TASKS-1)*step, n_max));
+  queue.add([=](auto &buckets) {
+    enumerate_worker((N_TASKS - 1) * step, n_max, buckets);
+  });
 
   queue.run();
 
   std::cout << "Finished hashing. Merging results" << std::endl; 
 
-  for (int i = 0; i < N_TASKS; i++) {
-    std::cout << "  Adding results from " << i << std::endl;
-    combined_buckets.insert(buckets[i].begin(), buckets[i].end());
-    buckets[i].clear();
+  for (auto &buckets : queue.stores) {
+    std::cout << "Processing some buckets" << std::endl;
+    combined_buckets.insert(buckets.begin(), buckets.end());
   }
 }
 
@@ -255,25 +300,33 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
   z3::solver s(ctx);
 
   std::vector<abstract_machine> machines{};
+  std::vector<uint16_t> operand_masks;
   for (const auto &seq : sequences) {
     abstract_machine m(ctx);
     m.instruction(seq);
     m.simplify();
     machines.push_back(m);
+
+    operand_masks.push_back(operand_mask(seq));
   }
 
   // Check instructions starting from the end
   for (ssize_t i = sequences.size() - 1; i >= 0; i--) {
     const instruction3 seq = sequences.at(i);
     const auto c = cycles(seq);
-    if (!isCanonical(seq)) { continue; }
-    // Compare with instructions starting at the beginning
+    if (!is_canonical(seq)) { continue; }
     for (size_t j = 0; j < seq_cycles[c]; j++) {
+      // if the candidate uses an unknown that wasn't introduced in the original,
+      // it can't be an optimization.
+      if (!is_possible_optimization_by_operand_masks(operand_masks[i], operand_masks[j])) {
+        continue;
+      }
       nComparisons++;
       if (equivalent(s, machines[i], machines[j])) {
         print(seq);
         std::cout << " <-> ";
         print(sequences[j]);
+        std::cout << " " << operand_masks[i];
         std::cout << std::endl;
         break;
       }
@@ -313,14 +366,18 @@ void process_hashes_concurrent(const std::multimap<uint32_t, instruction3> &comb
   std::cout << "Starting processing of hashes" << std::endl;
 
   constexpr int N_TASKS = 1024;
-  work_queue queue;
+  work_queue<int> queue;
 
   uint64_t hash_max = 0x100000000;
   uint64_t step = hash_max / N_TASKS;
   for (int i = 0; i < N_TASKS-1; i++) {
-    queue.add(std::bind(process_hashes_worker, std::ref(combined_buckets), i*step, (i+1)*step, true));
+    queue.add([=, &combined_buckets](int _) {
+      process_hashes_worker(combined_buckets, i * step, (i + 1) * step, true);
+    });
   }
-  queue.add(std::bind(process_hashes_worker, std::ref(combined_buckets), (N_TASKS-1)*step, hash_max, true));
+  queue.add([=, &combined_buckets](int _) {
+    process_hashes_worker(combined_buckets, (N_TASKS - 1) * step, hash_max, true);
+  });
 
   queue.run();
 }

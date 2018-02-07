@@ -2,17 +2,18 @@
 #include <vector>
 #include <mutex>
 
-using work_item = std::function<int()>;
 
 static const int N_THREADS = std::thread::hardware_concurrency();
 
+template<typename ThreadStorage>
 struct work_queue {
   
+  using work_item = std::function<void(ThreadStorage&)>;
+  std::vector<ThreadStorage> stores;
   std::vector<work_item> vec;
   std::mutex mutex;
   unsigned int i = 0;
   bool running = false;
-  int result = 0;
 
   void add(work_item f) {
     mutex.lock();
@@ -34,20 +35,25 @@ struct work_queue {
     return result;
   }
 
-  void thread_worker() {
+  void thread_worker(ThreadStorage &store) {
     work_item f;
     while (get_task(&f)) {
-      result += f();
+      f(store);
     }
   }
 
   void run() {
     running = true;
-    std::thread threads[N_THREADS-1];
-    for (int i = 0; i < N_THREADS-1; i++) {
-      threads[i] = std::thread(&work_queue::thread_worker, this);
+    for (int i = 0; i < N_THREADS; i++) {
+      ThreadStorage t;
+      stores.push_back(t);
     }
-    thread_worker();
+
+    std::thread threads[N_THREADS - 1];
+    for (int i = 0; i < N_THREADS - 1; i++) {
+      threads[i] = std::thread(&work_queue::thread_worker, this, std::ref(stores[i]));
+    }
+    thread_worker(stores[N_THREADS - 1]);
 
     for (int i = 0; i < N_THREADS-1; i++) {
       threads[i].join();

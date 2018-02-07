@@ -141,6 +141,21 @@ int enumerate_worker(std::multimap<uint32_t, instruction3> &buckets, uint32_t i_
       buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], opcodes[j], zero)));
     }
   }
+  for (uint32_t i = i_min; i < i_max; i++) {
+    for (uint32_t j = 0; j < sizeof(opcodes)/sizeof(opcodes[0]); j++) {
+      for (uint32_t k = 0; k < sizeof(opcodes)/sizeof(opcodes[0]); k++) {
+        uint32_t hash = 0;
+        for (uint16_t m = 0; m < nMachines; m++) {
+          random_machine machine(0xFFA4BCAD + m);
+          machine.instruction(opcodes[i]);
+          machine.instruction(opcodes[j]);
+          machine.instruction(opcodes[k]);
+          hash ^= machine.hash();
+        }
+        buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], opcodes[j], opcodes[k])));
+      }
+    }
+  }
   return 1;
 }
 

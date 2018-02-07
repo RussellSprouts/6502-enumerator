@@ -84,9 +84,9 @@ bool isCanonical(instruction3 ops) {
   bool c0 = false;
   for (int i = 0; i < 3; i++) {
     if (opsArr[i] == zero) { break; }
-    uint8_t val = opsArr[i].op & 0x0F;
-    switch (opsArr[i].op & 0xF0) {
-    case 0: // Immediate
+    uint8_t val = opsArr[i].mode & 0x0F;
+    switch (opsArr[i].mode & 0xF0) {
+    case 0x00: // Immediate
       if (val == 0 || 
           val == 4 || 
           val == 6) {
@@ -95,18 +95,18 @@ bool isCanonical(instruction3 ops) {
         return false;
       }
       break;
-    case 1: // Absolute
-    case 2: // AbsoluteX
-    case 3: // AbsoluteY
-    case 7: // Indirect
+    case 0x10: // Absolute
+    case 0x20: // AbsoluteX
+    case 0x30: // AbsoluteY
+    case 0x70: // Indirect
       if (val > abs) { return false; }
       else if (val == abs) { abs++; }
       break;
-    case 4: // ZeroPage
-    case 5: // ZeroPageX
-    case 6: // ZeroPageY
-    case 8: // IndirectX
-    case 9: // IndirectY
+    case 0x40: // ZeroPage
+    case 0x50: // ZeroPageX
+    case 0x60: // ZeroPageY
+    case 0x80: // IndirectX
+    case 0x90: // IndirectY
       if (val > zp) { return false; }
       else if (val == zp) { zp++; }
       break;

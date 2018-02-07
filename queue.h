@@ -43,12 +43,13 @@ struct work_queue {
 
   void run() {
     running = true;
-    std::thread threads[N_THREADS];
-    for (int i = 0; i < N_THREADS; i++) {
+    std::thread threads[N_THREADS-1];
+    for (int i = 0; i < N_THREADS-1; i++) {
       threads[i] = std::thread(&work_queue::thread_worker, this);
     }
+    thread_worker();
 
-    for (int i = 0; i < N_THREADS; i++) {
+    for (int i = 0; i < N_THREADS-1; i++) {
       threads[i].join();
     }
   }

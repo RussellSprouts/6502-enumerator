@@ -47,7 +47,7 @@ struct abstract_machine {
     literal1(c, c.num_val(1, c.bv_sort(8))),
     falsy(c.bool_val(false)),
     truthy(c.bool_val(true)),
-    _earlyExit(c.bv_const("earlyExit", 17)),
+    _earlyExit(c.num_val(0, c.bv_sort(17))),
     _memory(mkArray(c)),
     c(c) {}
 

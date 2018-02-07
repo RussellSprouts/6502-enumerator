@@ -42,39 +42,33 @@ void print(instruction3 ops) {
 }
 
 
-bool equivalent(z3::context &c, const abstract_machine &ma, const abstract_machine &mb) {
-  z3::solver s(c);
-
-  z3::params p(c);
-  p.set(":timeout", static_cast<unsigned>(1)); // in milliseconds
-  s.set(p);
-
-  std::cout << "(" << std::flush;
+bool equivalent(z3::solver &s, const abstract_machine &ma, const abstract_machine &mb) {
+  s.push();
   s.add(!(
-    ma._memory == mb._memory &&
-    ma._a == mb._a &&
-    ma._x == mb._x &&
-    ma._y == mb._y &&
-    ma._sp == mb._sp &&
+    ma._earlyExit == mb._earlyExit &&
     ma._ccS == mb._ccS &&
     ma._ccV == mb._ccV &&
     ma._ccD == mb._ccD &&
     ma._ccI == mb._ccI &&
     ma._ccC == mb._ccC &&
     ma._ccZ == mb._ccZ &&
-    ma._earlyExit == mb._earlyExit
+    ma._a == mb._a &&
+    ma._x == mb._x &&
+    ma._y == mb._y &&
+    ma._sp == mb._sp &&
+    ma._memory == mb._memory
   ));
   
   switch (s.check()) {
   case z3::sat:
-    std::cout << ")" << std::flush;
+    s.pop();
     return false;
   case z3::unknown:
     // TODO: add to list of timed-out comparisons.
-    std::cout << "~)" << std::flush;
+    s.pop();
     return false;
   default:
-    std::cout << ")" << std::flush;
+    s.pop();
     return true;
   }
 }
@@ -147,26 +141,8 @@ int enumerate_worker(std::multimap<uint32_t, instruction3> &buckets, uint32_t i_
       buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], opcodes[j], zero)));
     }
   }
-
-  /*for (uint32_t i = i_min; i < i_max; i++) {
-    std::cout << "i: " << i << std::endl;
-    for (uint32_t j = 0; j < sizeof(opcodes)/sizeof(opcodes[0]); j++) {
-      for (uint32_t k = 0; k < sizeof(opcodes)/sizeof(opcodes[0]); k++) {
-        uint32_t hash = 0;
-        for (uint16_t m = 0; m < nMachines; m++) {
-          random_machine machine(0xFFA4BCAD + m);
-          machine.instruction(opcodes[i]);
-          machine.instruction(opcodes[j]);
-          machine.instruction(opcodes[k]);
-          hash ^= machine.hash();
-        }
-        buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], opcodes[j], opcodes[k])));
-      }
-    }
-  }*/
   return 1;
 }
-
 
 void enumerate_concurrent(std::multimap<uint32_t, instruction3> &combined_buckets) {
 
@@ -235,7 +211,6 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
         machine.instruction(seq);
         hash ^= machine.hash();
       }
-      std::cout << "!" << std::flush;
       random_machine machine(0);
       machine.instruction(seq);
       hash ^= machine.hash();
@@ -244,11 +219,9 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
       hash ^= machine2.hash();
       buckets.insert(std::make_pair(hash, seq));
     }
-    // std::cout << "size " << buckets.size() << std::endl;
     return process_hashes_worker(buckets, 0, 0x100000000, false);
   }
 
-  std::cout << "$" << std::flush;
   std::sort(sequences.begin(), sequences.end(), compare_by_cycles);
 
   std::map<float, size_t> seq_cycles;
@@ -259,70 +232,38 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
       seq_cycles[c] = i;
       cost = c;
     }
-    std::cout << "*" << std::flush;
   }
 
   int nComparisons = 0;
-  if (sequences.size() > 1000) {
-    std::cout << "possibly equal: " << sequences.size() << std::endl;
-  }
 
   z3::context ctx;
+  z3::solver s(ctx);
+
   std::vector<abstract_machine> machines{};
   for (const auto &seq : sequences) {
     abstract_machine m(ctx);
     m.instruction(seq);
-    std::cout << "@" << std::flush;
-    //if (sequences.size() > 100) m.simplify();
+    m.simplify();
     machines.push_back(m);
   }
 
   // Check instructions starting from the end
   for (ssize_t i = sequences.size() - 1; i >= 0; i--) {
-    if (i > 10) {
-      std::cout << "SIZE: " << sequences.size() << " " << i << " ";
-      print(sequences[i]);
-      std::cout << std::endl;
-    }
     const instruction3 seq = sequences.at(i);
     const auto c = cycles(seq);
     if (!isCanonical(seq)) { continue; }
     // Compare with instructions starting at the beginning
     for (size_t j = 0; j < seq_cycles[c]; j++) {
       nComparisons++;
-      if (equivalent(ctx, machines[i], machines[j])) {
-        std::cout << "." << std::flush;
-        /*
-        // Move j to the front of the set of instructions with the same length
-        auto c = cycles(sequences[j]);
-        auto swap_i = seq_cycles[c];
-        auto former = sequences[swap_i];
-        // todo - shift instead of swap
-        sequences[swap_i] = sequences[j];
-        sequences[j] = former;
-        */
+      if (equivalent(s, machines[i], machines[j])) {
+        print(seq);
+        std::cout << " <-> ";
+        print(sequences[j]);
+        std::cout << std::endl;
         break;
-      } else {
-        std::cout << "," << std::flush;
       }
     }
   }
-  // iterate backwards
-  /*for (auto it = sequences.rbegin(); it != sequences.rend(); ++it) {
-    auto seq_cycles = cycles(seq);
-    auto seq = *it;
-    if (isCanonical(seq)) {
-      for (auto it2 = sequences.begin(); it2 != sequences.end(); ++it2) {
-        if (cycles(*it2) >= cycles(seq)) { break; }
-        nComparisons++;
-        // These two instruction sequences might be equivalent.
-        //print(seq);
-        //std::cout << " ?= ";
-        //print(*it2);
-        //std::cout << std::endl;
-      }
-    }
-  }*/
   return nComparisons;
 }
 
@@ -332,8 +273,6 @@ int process_hashes_worker(const std::multimap<uint32_t, instruction3> &combined_
 
   if (try_split) {
     std::cout << "  Processing hashes from " << std::hex << hash_min << " " << hash_max << std::endl;
-  } else {
-    std::cout << "    Processing hashes again after split" << std::endl;
   }
   int nComparisons = 0;
 
@@ -370,173 +309,6 @@ void process_hashes_concurrent(const std::multimap<uint32_t, instruction3> &comb
 
   queue.run();
 }
-
-/*
-
-
-  z3::context c;
-
-  uint32_t last = 0;
-  std::vector<uint64_t> sequences;
-  for (const auto &p : buckets) {
-    if (p.first != last) {
-      if (sequences.size() > 1) {
-        int l = length(sequences[0]);
-        bool differentLengths = false;
-        for (auto sequence : sequences) {
-          if (length(sequence) != l) {
-            differentLengths = true;
-            break;
-          }
-        }
-        bool hasCanonical = false;
-        for (auto sequence : sequences) {
-          auto tup = int2tuple(sequence);
-          if (isCanonical(tup)) {
-            hasCanonical = true;
-            break;
-          }
-        }
-        if (differentLengths && hasCanonical) {
-          for (auto sequence : sequences) {
-            auto tup = int2tuple(sequence);
-            for (auto sequence2 : sequences) {
-              if (sequence != sequence2) {
-                if (equivalent(c, tup, int2tuple(sequence2))) {
-                  print(tup); std::cout << std::endl;
-                  print(int2tuple(sequence2)); std::cout << std::endl;
-                }
-              }
-            }
-          }
-          std::cout << "---------------" << std::endl;
-          std::cout << sequences.size() << std::endl; 
-        }
-      }
-      sequences.clear();
-    }
-    sequences.push_back(p.second);
-    last = p.first;
-  }
-
-
-
-
-
-void loadEmulator() {
-  z3::context c;
-
-  {
-    z3::solver s(c);
-    // ensure abstract and concrete machines are the same.
-    for (int seed = 0; seed < 200; seed += 13) {
-      std::cout << "seed: " << seed << std::endl;
-      
-      random_machine initialMachine(seed);
-
-      z3::expr a = c.num_val(initialMachine._a, c.bv_sort(8));
-      z3::expr x = c.num_val(initialMachine._x, c.bv_sort(8));
-      z3::expr y = c.num_val(initialMachine._y, c.bv_sort(8));
-      z3::expr sp = c.num_val(initialMachine._sp, c.bv_sort(8));
-      z3::expr ccS = c.bool_val(initialMachine._ccS);
-      z3::expr ccV = c.bool_val(initialMachine._ccV);
-      z3::expr ccC = c.bool_val(initialMachine._ccC);
-      z3::expr ccD = c.bool_val(initialMachine._ccD);
-      z3::expr ccI = c.bool_val(initialMachine._ccI);
-      z3::expr ccZ = c.bool_val(initialMachine._ccZ);
-      z3::expr absolute0 = c.num_val(initialMachine.absolute0, c.bv_sort(16));
-      z3::expr absolute1 = c.num_val(initialMachine.absolute1, c.bv_sort(16));
-      z3::expr absolute2 = c.num_val(initialMachine.absolute2, c.bv_sort(16));
-      z3::expr zp0 = c.num_val(initialMachine.zp0, c.bv_sort(8));
-      z3::expr zp1 = c.num_val(initialMachine.zp1, c.bv_sort(8));
-      z3::expr zp2 = c.num_val(initialMachine.zp2, c.bv_sort(8));
-      z3::expr zp3 = c.num_val(initialMachine.zp3, c.bv_sort(8));
-      z3::expr c0 = c.num_val(initialMachine.c0, c.bv_sort(8));
-      z3::expr c1 = c.num_val(initialMachine.c1, c.bv_sort(8));
-      z3::expr memory = mkArray(c);
-      for (uint32_t i = 0; i < 0x10000; i++) {
-        memory = z3::store(memory, i, initialMachine.read(i));
-      }
-      for (uint32_t i = 0; i < sizeof(opcodes)/sizeof(opcodes[0]); i++) {
-        abstract_machine m1(c);
-        random_machine m2(seed);
-        m1._a = a;
-        m1._x = x;
-        m1._y = y;
-        m1._sp = sp;
-        m1._ccS = ccS;
-        m1._ccV = ccV;
-        m1._ccC = ccC;
-        m1._ccD = ccD;
-        m1._ccI = ccI;
-        m1._ccZ = ccZ;
-        m1.absolute0 = absolute0;
-        m1.absolute1 = absolute1;
-        m1.absolute2 = absolute2;
-        m1.zp0 = zp0;
-        m1.zp1 = zp1;
-        m1.zp2 = zp2;
-        m1.zp3 = zp3;
-        m1.c0 = c0;
-        m1.c1 = c1;
-        m1._memory = memory;
-        
-        a_emu.instruction(m1, opcodes[i].op, opcodes[i].mode);
-        c_emu.instruction(m2, opcodes[i].op, opcodes[i].mode);
-        addEquivalence(m1, initialMachine, s);
-        if (s.check() != z3::sat) {
-          std::cout << "different: " << OpNames[opcodes[i].op] << " " << opcodes[i].mode << std::endl;
-        }
-      }
-    }
-  }
-
-  for (uint32_t i = 0; i < sizeof(opcodes)/sizeof(opcodes[0]); i++) {
-    abstract_machine m1(c);
-
-    e1.instruction(opcodes[i].op, opcodes[i].mode);
-    z3::solver s(c);
-
-
-    random_machine cm1(0);
-    a_emu.instruction(m1, opcodes[i].op, opcodes[i].mode);
-    for (int j = 0; j < i; j++) {
- 
-      random_machine cm2(0);
-      ce2.instruction(opcodes[j].op, opcodes[j].mode);
-
-      if (cm1._a != cm2._a || cm1._x != cm2._x || cm1._y != cm2._y) {
-        continue;
-      }
-   
-      abstract_machine m2(c);
-
-      e2.instruction(opcodes[j].op, opcodes[j].mode);
-
-      s.push();
-      s.add(!(
-        m1._memory == m2._memory &&
-        m1._a == m2._a &&
-        m1._x == m2._x &&
-        m1._y == m2._y &&
-        m1._sp == m2._sp &&
-        m1._ccS == m2._ccS &&
-        m1._ccV == m2._ccV &&
-        m1._ccD == m2._ccD &&
-        m1._ccI == m2._ccI &&
-        m1._ccC == m2._ccC &&
-        m1._ccZ == m2._ccZ &&
-        m1._earlyExit == m2._earlyExit
-      ));
-
-      if (s.check() == z3::unsat) {
-        std::cout << "Same: " << OpNames[(int)opcodes[i].op] << "," << AddrModeNames[opcodes[i].mode] << std::endl;;
-        std::cout << "and:  " << OpNames[(int)opcodes[j].op] << "," << (int)opcodes[j].mode << std::endl;;
-      }
-      s.pop();
-    }
-  }
-}*/
 
 int main() {
   try {

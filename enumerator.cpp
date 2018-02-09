@@ -362,21 +362,20 @@ int process_hashes_worker(const std::multimap<uint32_t, instruction3> &combined_
   return nComparisons;
 }
 
-void process_hashes_concurrent(const std::multimap<uint32_t, instruction3> &combined_buckets) {
+void process_hashes_concurrent(const std::multimap<uint32_t, instruction3> &combined_buckets, uint64_t hash_min, uint64_t hash_max) {
   std::cout << "Starting processing of hashes" << std::endl;
 
   constexpr int N_TASKS = 1024;
   work_queue<int> queue;
 
-  uint64_t hash_max = 0x100000000;
-  uint64_t step = hash_max / N_TASKS;
+  uint64_t step = (hash_max - hash_min) / N_TASKS;
   for (int i = 0; i < N_TASKS-1; i++) {
     queue.add([=, &combined_buckets](int _) {
-      process_hashes_worker(combined_buckets, i * step, (i + 1) * step, true);
+      process_hashes_worker(combined_buckets, hash_min + i * step, hash_min + (i + 1) * step, true);
     });
   }
   queue.add([=, &combined_buckets](int _) {
-    process_hashes_worker(combined_buckets, (N_TASKS - 1) * step, hash_max, true);
+    process_hashes_worker(combined_buckets, hash_min + (N_TASKS - 1) * step, hash_max, true);
   });
 
   queue.run();
@@ -384,21 +383,13 @@ void process_hashes_concurrent(const std::multimap<uint32_t, instruction3> &comb
 
 int main() {
   try {
-    for (int m = 0; m < 128; m++) {
-      random_machine machine(0x56346d56 + m*1001);
-      std::cout << (machine._ccS ? '.' : ' ')
-        << (machine._ccV ? '.' : ' ')
-        << (machine._ccC ? '.' : ' ')
-        << (machine._ccI ? '.' : ' ')
-        << (machine._ccD ? '.' : ' ')
-        << (machine._ccZ ? '.' : ' ')
-        << std::endl;
-    }
-    
     std::multimap<uint32_t, instruction3> combined_buckets;
     enumerate_concurrent(combined_buckets);
-    process_hashes_concurrent(combined_buckets);
-    
+    constexpr int num_segments = 64;
+    for (uint64_t i = 0; i < 0x100000000; i += 0x100000000 / num_segments) {
+      process_hashes_concurrent(combined_buckets, i, i + 0x100000000 / num_segments);
+      Z3_reset_memory();
+    }
   } catch (z3::exception & ex) {
     std::cout << "unexpected error: " << ex << "\n";
   }

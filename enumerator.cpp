@@ -13,30 +13,27 @@
 #include "abstract_machine.h"
 #include "queue.h"
 
-uint8_t length(instruction3 ops) {
-  return std::get<2>(ops) == opcode::zero ? (std::get<1>(ops) == opcode::zero ? 1 : 2) : 3;
+uint8_t length(instruction_seq ops) {
+  return ops.ops[2] == opcode::zero ? (ops.ops[1] == opcode::zero ? 1 : 2) : 3;
 }
 
 void print(opcode op) {
   std::cout << OpNames[op.op] << " " << AddrModeNames[op.mode];
 }
 
-void print(instruction3 ops) {
-  if (std::get<0>(ops) != opcode::zero) { print(std::get<0>(ops)); }
-  if (std::get<1>(ops) != opcode::zero) {
-    std::cout << "; ";
-    print(std::get<1>(ops));
-  }
-  if (std::get<2>(ops) != opcode::zero) {
-    std::cout << "; ";
-    print(std::get<2>(ops));
+void print(instruction_seq ops) {
+  for (int i = 0; i < instruction_seq::max_length; i++) {
+    if (ops.ops[i] == opcode::zero) { return; }
+    print(ops.ops[i]);
   }
 }
 
-const float cycles(const instruction3 ops) {
-  return operation_costs[std::get<0>(ops)]
-    + operation_costs[std::get<1>(ops)]
-    + operation_costs[std::get<2>(ops)];
+const float cycles(const instruction_seq ops) {
+  float cost = 0;
+  for (int i = 0; i < instruction_seq::max_length; i++) {
+    cost += operation_costs[ops.ops[i]];
+  }
+  return cost;
 }
 
 bool equivalent(z3::solver &s, const abstract_machine &ma, const abstract_machine &mb) {
@@ -74,15 +71,11 @@ bool equivalent(z3::solver &s, const abstract_machine &ma, const abstract_machin
  * Generates a bit mask showing the operands
  * in use in the given set of instructions.
  */
-uint16_t operand_mask(instruction3 ops) {
-  opcode one = std::get<0>(ops);
-  opcode two = std::get<1>(ops);
-  opcode three = std::get<2>(ops);
-  opcode opsArr[3] { one, two, three };
+uint16_t operand_mask(instruction_seq ops) {
   uint16_t result = 0;
-  for (int i = 0; i < 3; i++) {
-    if (opsArr[i] == opcode::zero) break;
-    uint8_t operand = opsArr[i].mode & 0xF;
+  for (int i = 0; i < instruction_seq::max_length; i++) {
+    if (ops.ops[i] == opcode::zero) break;
+    uint8_t operand = ops.ops[i].mode & 0xF;
     // handle immediate values
     switch (operand) {
       case ImmediateC0: case ImmediateC0Plus1:
@@ -113,18 +106,14 @@ inline bool is_possible_optimization_by_operand_masks(uint16_t original, uint16_
   return (original & candidate) == candidate;
 }
 
-bool is_canonical(instruction3 ops) {
-  opcode one = std::get<0>(ops);
-  opcode two = std::get<1>(ops);
-  opcode three = std::get<2>(ops);
-  opcode opsArr[3] { one, two, three };
+bool is_canonical(instruction_seq ops) {
   int abs = 7;
   int zp = 0xA;
   bool c0 = false;
-  for (int i = 0; i < 3; i++) {
-    if (opsArr[i] == opcode::zero) { break; }
-    uint8_t val = opsArr[i].mode & 0x0F;
-    switch (opsArr[i].mode & 0xF0) {
+  for (int i = 0; i < instruction_seq::max_length; i++) {
+    if (ops.ops[i] == opcode::zero) { break; }
+    uint8_t val = ops.ops[i].mode & 0x0F;
+    switch (ops.ops[i].mode & 0xF0) {
     case 0x00: // Immediate
       if (val == 0 || 
           val == 4 || 
@@ -154,56 +143,45 @@ bool is_canonical(instruction3 ops) {
   return true;
 }
 
-int enumerate_worker(uint32_t i_min, uint32_t i_max, std::multimap<uint32_t, instruction3> &buckets) {
+const static int N_INSTRUCTIONS = (sizeof opcodes) / (sizeof opcodes[0]);
+
+void enumerate_recursive(uint32_t i_min, uint32_t i_max, const random_machine &m1, const random_machine &m2, instruction_seq path, int depth, std::multimap<uint32_t, instruction_seq> &buckets) {
+  std::cout << "MIN: " << i_min << " MAX: " << i_max << " DEPTH:" << depth<< " " << &m1 << " " << &m2 << std::endl; 
+  for (uint32_t i = i_min; i < i_max; i++) {
+    random_machine m1_copy = m1;
+    random_machine m2_copy = m2;
+    m1_copy.instruction(opcodes[i]);
+    m2_copy.instruction(opcodes[i]);
+    uint32_t hash = m1_copy.hash() ^ m2_copy.hash();
+    instruction_seq new_path = path.append(opcodes[i]);
+    //std::cout << "Inserting " << hash << " ";
+    //print(new_path);
+    //std::cout << std::endl;
+    buckets.insert(std::make_pair(hash, new_path));
+    //std::cout << "done." << std::endl;
+    if (depth > 1) {
+      enumerate_recursive(0, N_INSTRUCTIONS, m1, m2, new_path, depth - 1, buckets);
+    }
+  }
+}
+
+void enumerate_worker(uint32_t i_min, uint32_t i_max, std::multimap<uint32_t, instruction_seq> &buckets) {
   
   std::cout << i_min << std::endl;
 
-  constexpr uint16_t nMachines = 2;
+  constexpr int DEPTH = 3;
 
-  for (uint32_t i = i_min; i < i_max; i++) {
-    uint32_t hash = 0;
-    for (uint16_t m = 0; m < nMachines; m++) {
-      random_machine machine(0xFFA4BCAD + m);
-      machine.instruction(opcodes[i]);
-      hash ^= machine.hash();
-    }
-    buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], opcode::zero, opcode::zero)));
-  }
-  for (uint32_t i = i_min; i < i_max; i++) {
-    for (uint32_t j = 0; j < sizeof(opcodes)/sizeof(opcodes[0]); j++) {
-      uint32_t hash = 0;
-      for (uint16_t m = 0; m < nMachines; m++) {
-        random_machine machine(0xFFA4BCAD + m);
-        machine.instruction(opcodes[i]);
-        machine.instruction(opcodes[j]);
-        hash ^= machine.hash();
-      }
-      buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], opcodes[j], opcode::zero)));
-    }
-  }
-  /*for (uint32_t i = i_min; i < i_max; i++) {
-    for (uint32_t j = 0; j < sizeof(opcodes)/sizeof(opcodes[0]); j++) {
-      for (uint32_t k = 0; k < sizeof(opcodes)/sizeof(opcodes[0]); k++) {
-        uint32_t hash = 0;
-        for (uint16_t m = 0; m < nMachines; m++) {
-          random_machine machine(0xFFA4BCAD + m);
-          machine.instruction(opcodes[i]);
-          machine.instruction(opcodes[j]);
-          machine.instruction(opcodes[k]);
-          hash ^= machine.hash();
-        }
-        buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], opcodes[j], opcodes[k])));
-      }
-    }
-  }*/
-  return 1;
+  random_machine m1(0xFFA4BCAD);
+  random_machine m2(0x4572849E);
+  instruction_seq path;
+  enumerate_recursive(i_min, i_max, m1, m2, path, DEPTH, buckets);
 }
 
-void enumerate_concurrent(std::multimap<uint32_t, instruction3> &combined_buckets) {
+void enumerate_concurrent(std::multimap<uint32_t, instruction_seq> &combined_buckets) {
 
   std::cout << "Starting " << N_THREADS << " threads." << std::endl;
 
-  work_queue<std::multimap<uint32_t, instruction3>> queue;
+  work_queue<std::multimap<uint32_t, instruction_seq>> queue;
   constexpr int N_TASKS = (sizeof opcodes / sizeof opcodes[0]);
  
   // divide into separate work items for each opcode.
@@ -229,16 +207,16 @@ void enumerate_concurrent(std::multimap<uint32_t, instruction3> &combined_bucket
   
 }
 
-bool compare_by_cycles(const instruction3 &a, const instruction3 &b) {
+bool compare_by_cycles(const instruction_seq &a, const instruction_seq &b) {
   return cycles(a) < cycles(b);
 }
-bool compare_by_length(const instruction3 &a, const instruction3 &b) {
+bool compare_by_length(const instruction_seq &a, const instruction_seq &b) {
   return length(a) < length(b);
 }
 
-int process_hashes_worker(const std::multimap<uint32_t, instruction3> &combined_buckets, uint64_t hash_min, uint64_t hash_max, bool try_split);
+int process_hashes_worker(const std::multimap<uint32_t, instruction_seq> &combined_buckets, uint64_t hash_min, uint64_t hash_max, bool try_split);
 
-int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
+int process_sequences(std::vector<instruction_seq> &sequences, bool try_split) {
 
   if (sequences.size() <= 1) {
     return 0; // this instruction sequence must be unique.
@@ -256,7 +234,7 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
   }
 
   if (try_split) {
-    std::multimap<uint32_t, instruction3> buckets;
+    std::multimap<uint32_t, instruction_seq> buckets;
 
     constexpr int nMachines = 128;
 
@@ -308,7 +286,7 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
 
   // Check instructions starting from the end
   for (ssize_t i = sequences.size() - 1; i >= 0; i--) {
-    const instruction3 seq = sequences.at(i);
+    const instruction_seq seq = sequences.at(i);
     const auto c = cycles(seq);
     if (!is_canonical(seq)) { continue; }
     for (size_t j = 0; j < seq_cycles[c]; j++) {
@@ -336,7 +314,7 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
   return nComparisons;
 }
 
-int process_hashes_worker(const std::multimap<uint32_t, instruction3> &combined_buckets, uint64_t hash_min, uint64_t hash_max, bool try_split) {
+int process_hashes_worker(const std::multimap<uint32_t, instruction_seq> &combined_buckets, uint64_t hash_min, uint64_t hash_max, bool try_split) {
   auto it = combined_buckets.lower_bound(hash_min);
   auto end = hash_max == 0x100000000 ? combined_buckets.end() : combined_buckets.lower_bound(hash_max);
 
@@ -346,10 +324,10 @@ int process_hashes_worker(const std::multimap<uint32_t, instruction3> &combined_
   int nComparisons = 0;
 
   int64_t last = -1;
-  std::vector<instruction3> sequences;
+  std::vector<instruction_seq> sequences;
   for (; it != end && it != combined_buckets.end(); ++it) {
     uint32_t hash = it->first;
-    instruction3 ops = it->second;
+    instruction_seq ops = it->second;
     if (hash != last) {
       // sequences now contains a list of instruction sequences which are possibly equivalent
       nComparisons += process_sequences(sequences, try_split);
@@ -363,7 +341,7 @@ int process_hashes_worker(const std::multimap<uint32_t, instruction3> &combined_
   return nComparisons;
 }
 
-void process_hashes_concurrent(const std::multimap<uint32_t, instruction3> &combined_buckets, uint64_t hash_min, uint64_t hash_max) {
+void process_hashes_concurrent(const std::multimap<uint32_t, instruction_seq> &combined_buckets, uint64_t hash_min, uint64_t hash_max) {
   std::cout << "Starting processing of hashes" << std::endl;
 
   constexpr int N_TASKS = 1024;
@@ -408,7 +386,7 @@ int main() {
   exit(0);
   */
   try {
-    std::multimap<uint32_t, instruction3> combined_buckets;
+    std::multimap<uint32_t, instruction_seq> combined_buckets;
     enumerate_concurrent(combined_buckets);
     constexpr int num_segments = 1;
     for (uint64_t i = 0; i < 0x100000000; i += 0x100000000 / num_segments) {

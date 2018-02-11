@@ -38,12 +38,11 @@ struct random_machine {
     c1 = fnv(131);
   }
 
-  void instruction(instruction3 ops) {
-    opcode zero { (Operations)0, (AddrMode)0 };
-
-    if (std::get<0>(ops) != zero) { instruction(std::get<0>(ops)); }
-    if (std::get<1>(ops) != zero) { instruction(std::get<1>(ops)); }
-    if (std::get<2>(ops) != zero) { instruction(std::get<2>(ops)); }
+  void instruction(instruction_seq ops) {
+    for (int i = 0; i < instruction_seq::max_length; i++) {
+      if (ops.ops[i] != opcode::zero) { instruction(ops.ops[i]); }
+      else { break; }
+    }
   }
 
   void instruction(opcode op) {

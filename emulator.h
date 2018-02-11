@@ -5,8 +5,29 @@
 #include "operations.h"
 
 typedef std::tuple<opcode, opcode> instruction2;
-typedef std::tuple<opcode, opcode, opcode> instruction3;
+//typedef std::tuple<opcode, opcode, opcode> instruction_seq;
 typedef std::tuple<opcode, opcode, opcode, opcode> instruction4;
+
+struct instruction_seq {
+  const static int max_length;
+  opcode ops[3];
+
+  instruction_seq()
+    : ops{ opcode::zero, opcode::zero, opcode::zero } {}
+
+  instruction_seq append(opcode op) const {
+    instruction_seq copy = *this;
+    for (int i = 0; i < max_length; i++) {
+      if (copy.ops[i] == opcode::zero) {
+        copy.ops[i] = op;
+        break;
+      }
+    }
+    return copy;
+  }
+};
+
+const int instruction_seq::max_length = 3;
 
 template <typename machine>
 struct emulator {

@@ -69,12 +69,11 @@ struct abstract_machine {
   /**
    * Runs a set of three instructions. (Some may do nothing).
    */
-  void instruction(instruction3 ops) {
-    opcode zero { (Operations)0, (AddrMode)0 };
-
-    if (std::get<0>(ops) != zero) { instruction(std::get<0>(ops)); }
-    if (std::get<1>(ops) != zero) { instruction(std::get<1>(ops)); }
-    if (std::get<2>(ops) != zero) { instruction(std::get<2>(ops)); }
+  void instruction(const instruction_seq &ops) {
+    for (int i = 0; i < instruction_seq::max_length; i++) {
+      if (ops.ops[i] != opcode::zero) { instruction(ops.ops[i]); }
+      else { break; }
+    }
   }
 
   /**

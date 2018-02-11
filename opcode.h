@@ -18,7 +18,12 @@ struct opcode {
   bool operator <(const opcode& other) const {
     return op < other.op ? true : op > other.op ? false : mode < other.mode;
   }
+
+  const static opcode zero;
 };
+
+const opcode opcode::zero = opcode { (Operations)0, (AddrMode)0 };
+
 
 opcode opcodes[] = {
   { ADC, Immediate0 },

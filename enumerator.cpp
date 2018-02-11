@@ -13,15 +13,8 @@
 #include "abstract_machine.h"
 #include "queue.h"
 
-const float cycles(const instruction3 ops) {
-  return operation_costs[std::get<0>(ops)]
-    + operation_costs[std::get<1>(ops)]
-    + operation_costs[std::get<2>(ops)];
-}
-
 uint8_t length(instruction3 ops) {
-  constexpr opcode zero { (Operations)0, (AddrMode)0 };
-  return std::get<2>(ops) == zero ? (std::get<1>(ops) == zero ? 1 : 2) : 3;
+  return std::get<2>(ops) == opcode::zero ? (std::get<1>(ops) == opcode::zero ? 1 : 2) : 3;
 }
 
 void print(opcode op) {
@@ -29,16 +22,21 @@ void print(opcode op) {
 }
 
 void print(instruction3 ops) {
-  opcode zero { (Operations)0, (AddrMode)0 };
-  if (std::get<0>(ops) != zero) { print(std::get<0>(ops)); }
-  if (std::get<1>(ops) != zero) {
+  if (std::get<0>(ops) != opcode::zero) { print(std::get<0>(ops)); }
+  if (std::get<1>(ops) != opcode::zero) {
     std::cout << "; ";
     print(std::get<1>(ops));
   }
-  if (std::get<2>(ops) != zero) {
+  if (std::get<2>(ops) != opcode::zero) {
     std::cout << "; ";
     print(std::get<2>(ops));
   }
+}
+
+const float cycles(const instruction3 ops) {
+  return operation_costs[std::get<0>(ops)]
+    + operation_costs[std::get<1>(ops)]
+    + operation_costs[std::get<2>(ops)];
 }
 
 bool equivalent(z3::solver &s, const abstract_machine &ma, const abstract_machine &mb) {
@@ -83,6 +81,7 @@ uint16_t operand_mask(instruction3 ops) {
   opcode opsArr[3] { one, two, three };
   uint16_t result = 0;
   for (int i = 0; i < 3; i++) {
+    if (opsArr[i] == opcode::zero) break;
     uint8_t operand = opsArr[i].mode & 0xF;
     // handle immediate values
     switch (operand) {
@@ -111,12 +110,10 @@ uint16_t operand_mask(instruction3 ops) {
  * that the original sequence doesn't.
  */
 inline bool is_possible_optimization_by_operand_masks(uint16_t original, uint16_t candidate) {
-  
   return (original & candidate) == candidate;
 }
 
 bool is_canonical(instruction3 ops) {
-  opcode zero { (Operations)0, (AddrMode)0 };
   opcode one = std::get<0>(ops);
   opcode two = std::get<1>(ops);
   opcode three = std::get<2>(ops);
@@ -125,7 +122,7 @@ bool is_canonical(instruction3 ops) {
   int zp = 0xA;
   bool c0 = false;
   for (int i = 0; i < 3; i++) {
-    if (opsArr[i] == zero) { break; }
+    if (opsArr[i] == opcode::zero) { break; }
     uint8_t val = opsArr[i].mode & 0x0F;
     switch (opsArr[i].mode & 0xF0) {
     case 0x00: // Immediate
@@ -162,7 +159,6 @@ int enumerate_worker(uint32_t i_min, uint32_t i_max, std::multimap<uint32_t, ins
   std::cout << i_min << std::endl;
 
   constexpr uint16_t nMachines = 2;
-  opcode zero = opcode { (Operations)0, (AddrMode)0 };
 
   for (uint32_t i = i_min; i < i_max; i++) {
     uint32_t hash = 0;
@@ -171,7 +167,7 @@ int enumerate_worker(uint32_t i_min, uint32_t i_max, std::multimap<uint32_t, ins
       machine.instruction(opcodes[i]);
       hash ^= machine.hash();
     }
-    buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], zero, zero)));
+    buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], opcode::zero, opcode::zero)));
   }
   for (uint32_t i = i_min; i < i_max; i++) {
     for (uint32_t j = 0; j < sizeof(opcodes)/sizeof(opcodes[0]); j++) {
@@ -182,7 +178,7 @@ int enumerate_worker(uint32_t i_min, uint32_t i_max, std::multimap<uint32_t, ins
         machine.instruction(opcodes[j]);
         hash ^= machine.hash();
       }
-      buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], opcodes[j], zero)));
+      buckets.insert(std::make_pair(hash, std::make_tuple(opcodes[i], opcodes[j], opcode::zero)));
     }
   }
   /*for (uint32_t i = i_min; i < i_max; i++) {
@@ -224,13 +220,13 @@ void enumerate_concurrent(std::multimap<uint32_t, instruction3> &combined_bucket
   });
 
   queue.run();
-
+  
   std::cout << "Finished hashing. Merging results" << std::endl; 
-
   for (auto &buckets : queue.stores) {
-    std::cout << "Processing some buckets" << std::endl;
+    std::cout << "Processing some buckets (" << buckets.size() << ")" << std::endl;
     combined_buckets.insert(buckets.begin(), buckets.end());
   }
+  
 }
 
 bool compare_by_cycles(const instruction3 &a, const instruction3 &b) {
@@ -319,6 +315,11 @@ int process_sequences(std::vector<instruction3> &sequences, bool try_split) {
       // if the candidate uses an unknown that wasn't introduced in the original,
       // it can't be an optimization.
       if (!is_possible_optimization_by_operand_masks(operand_masks[i], operand_masks[j])) {
+        // std::cout << "Skipping (mask) ";
+        // print(seq);
+        // std::cout << "[" << operand_masks[i] << "] <?> ";
+        // print(sequences[j]);
+        // std::cout << "[" << operand_masks[j] << "]" << std::endl;
         continue;
       }
       nComparisons++;
@@ -382,13 +383,39 @@ void process_hashes_concurrent(const std::multimap<uint32_t, instruction3> &comb
 }
 
 int main() {
+  /*
+  z3::context c;
+  z3::solver s(c);
+  abstract_machine m1(c);
+  abstract_machine m2(c);
+  opcode ops1[] {
+    { CMP, ZeroPageX0 },
+    { STX, ZeroPage1 },
+    { STA, ZeroPage1 }
+  };
+  opcode ops2[] {
+    { CPY, Immediate1 },
+    { CMP, ZeroPageX0 },
+    { STA, ZeroPage1 }
+  };
+  m1.instruction(ops1[0]);
+  m1.instruction(ops1[1]);
+  m1.instruction(ops1[2]);
+  m2.instruction(ops2[0]);
+  m2.instruction(ops2[1]);
+  std::cout << cycles(std::make_tuple(ops2[0], ops2[1], ops2[2])) << std::endl;
+  std::cout << equivalent(s, m1, m2) << std::endl;
+  exit(0);
+  */
   try {
     std::multimap<uint32_t, instruction3> combined_buckets;
     enumerate_concurrent(combined_buckets);
-    constexpr int num_segments = 64;
+    constexpr int num_segments = 1;
     for (uint64_t i = 0; i < 0x100000000; i += 0x100000000 / num_segments) {
       process_hashes_concurrent(combined_buckets, i, i + 0x100000000 / num_segments);
+      std::cout << "Reseting memory" << std::endl;
       Z3_reset_memory();
+      std::cout << "Done reseting." << std::endl;
     }
   } catch (z3::exception & ex) {
     std::cout << "unexpected error: " << ex << "\n";

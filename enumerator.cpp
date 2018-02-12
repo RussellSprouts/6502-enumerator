@@ -169,7 +169,7 @@ void enumerate_worker(uint32_t i_min, uint32_t i_max, std::multimap<uint32_t, in
   
   std::cout << i_min << std::endl;
 
-  constexpr int DEPTH = 3;
+  constexpr int DEPTH = 2;
 
   random_machine m1(0xFFA4BCAD);
   random_machine m2(0x4572849E);
@@ -214,9 +214,13 @@ bool compare_by_length(const instruction_seq &a, const instruction_seq &b) {
   return length(a) < length(b);
 }
 
-int process_hashes_worker(const std::multimap<uint32_t, instruction_seq> &combined_buckets, uint64_t hash_min, uint64_t hash_max, bool try_split);
+struct process_hashes_thread_context {
+  std::vector<std::pair<instruction_seq, instruction_seq>> optimizations;
+};
 
-int process_sequences(std::vector<instruction_seq> &sequences, bool try_split) {
+int process_hashes_worker(const std::multimap<uint32_t, instruction_seq> &combined_buckets, process_hashes_thread_context &ctx, uint64_t hash_min, uint64_t hash_max, bool try_split);
+
+int process_sequences(std::vector<instruction_seq> &sequences, process_hashes_thread_context &thread_ctx, bool try_split) {
 
   if (sequences.size() <= 1) {
     return 0; // this instruction sequence must be unique.
@@ -253,7 +257,7 @@ int process_sequences(std::vector<instruction_seq> &sequences, bool try_split) {
       hash ^= machine2.hash();
       buckets.insert(std::make_pair(hash, seq));
     }
-    return process_hashes_worker(buckets, 0, 0x100000000, false);
+    return process_hashes_worker(buckets, thread_ctx, 0, 0x100000000, false);
   }
 
   std::sort(sequences.begin(), sequences.end(), compare_by_cycles);
@@ -302,6 +306,7 @@ int process_sequences(std::vector<instruction_seq> &sequences, bool try_split) {
       }
       nComparisons++;
       if (equivalent(s, machines[i], machines[j])) {
+        thread_ctx.optimizations.push_back(std::make_pair(seq, sequences[j]));
         print(seq);
         std::cout << " <-> ";
         print(sequences[j]);
@@ -314,7 +319,7 @@ int process_sequences(std::vector<instruction_seq> &sequences, bool try_split) {
   return nComparisons;
 }
 
-int process_hashes_worker(const std::multimap<uint32_t, instruction_seq> &combined_buckets, uint64_t hash_min, uint64_t hash_max, bool try_split) {
+int process_hashes_worker(const std::multimap<uint32_t, instruction_seq> &combined_buckets, process_hashes_thread_context &thread_ctx, uint64_t hash_min, uint64_t hash_max, bool try_split) {
   auto it = combined_buckets.lower_bound(hash_min);
   auto end = hash_max == 0x100000000 ? combined_buckets.end() : combined_buckets.lower_bound(hash_max);
 
@@ -330,13 +335,13 @@ int process_hashes_worker(const std::multimap<uint32_t, instruction_seq> &combin
     instruction_seq ops = it->second;
     if (hash != last) {
       // sequences now contains a list of instruction sequences which are possibly equivalent
-      nComparisons += process_sequences(sequences, try_split);
+      nComparisons += process_sequences(sequences, thread_ctx, try_split);
       sequences.clear();
     }
     sequences.push_back(ops);
     last = hash;
   }
-  nComparisons += process_sequences(sequences, try_split);
+  nComparisons += process_sequences(sequences, thread_ctx, try_split);
   if (try_split) { std::cout << "Comparisons 0x" << nComparisons << std::endl; }
   return nComparisons;
 }
@@ -345,19 +350,24 @@ void process_hashes_concurrent(const std::multimap<uint32_t, instruction_seq> &c
   std::cout << "Starting processing of hashes" << std::endl;
 
   constexpr int N_TASKS = 1024;
-  work_queue<int> queue;
+  work_queue<process_hashes_thread_context> queue;
 
   uint64_t step = (hash_max - hash_min) / N_TASKS;
   for (int i = 0; i < N_TASKS-1; i++) {
-    queue.add([=, &combined_buckets](int _) {
-      process_hashes_worker(combined_buckets, hash_min + i * step, hash_min + (i + 1) * step, true);
+    queue.add([=, &combined_buckets](auto &ctx) {
+      process_hashes_worker(combined_buckets, ctx, hash_min + i * step, hash_min + (i + 1) * step, true);
     });
   }
-  queue.add([=, &combined_buckets](int _) {
-    process_hashes_worker(combined_buckets, hash_min + (N_TASKS - 1) * step, hash_max, true);
+  queue.add([=, &combined_buckets](auto& ctx) {
+    process_hashes_worker(combined_buckets, ctx, hash_min + (N_TASKS - 1) * step, hash_max, true);
   });
 
   queue.run();
+
+  std::cout << "Done processing hashes." << std::endl;
+  for (auto &thread_context : queue.stores) {
+    std::cout << "One thread found " << thread_context.optimizations.size() << std::endl;
+  }
 }
 
 int main() {

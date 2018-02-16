@@ -25,6 +25,7 @@ void print(instruction_seq ops) {
   for (int i = 0; i < instruction_seq::max_length; i++) {
     if (ops.ops[i] == opcode::zero) { return; }
     print(ops.ops[i]);
+    std::cout << "; ";
   }
 }
 
@@ -146,7 +147,6 @@ bool is_canonical(instruction_seq ops) {
 const static int N_INSTRUCTIONS = (sizeof opcodes) / (sizeof opcodes[0]);
 
 void enumerate_recursive(uint32_t i_min, uint32_t i_max, const random_machine &m1, const random_machine &m2, instruction_seq path, int depth, std::multimap<uint32_t, instruction_seq> &buckets) {
-  std::cout << "MIN: " << i_min << " MAX: " << i_max << " DEPTH:" << depth<< " " << &m1 << " " << &m2 << std::endl; 
   for (uint32_t i = i_min; i < i_max; i++) {
     random_machine m1_copy = m1;
     random_machine m2_copy = m2;
@@ -165,20 +165,17 @@ void enumerate_recursive(uint32_t i_min, uint32_t i_max, const random_machine &m
   }
 }
 
-void enumerate_worker(uint32_t i_min, uint32_t i_max, std::multimap<uint32_t, instruction_seq> &buckets) {
+void enumerate_worker(uint32_t i_min, uint32_t i_max, int depth, std::multimap<uint32_t, instruction_seq> &buckets) {
   
   std::cout << i_min << std::endl;
-
-  constexpr int DEPTH = 2;
 
   random_machine m1(0xFFA4BCAD);
   random_machine m2(0x4572849E);
   instruction_seq path;
-  enumerate_recursive(i_min, i_max, m1, m2, path, DEPTH, buckets);
+  enumerate_recursive(i_min, i_max, m1, m2, path, depth, buckets);
 }
 
-void enumerate_concurrent(std::multimap<uint32_t, instruction_seq> &combined_buckets) {
-
+void enumerate_concurrent(int depth, std::multimap<uint32_t, instruction_seq> &combined_buckets) {
   std::cout << "Starting " << N_THREADS << " threads." << std::endl;
 
   work_queue<std::multimap<uint32_t, instruction_seq>> queue;
@@ -190,11 +187,11 @@ void enumerate_concurrent(std::multimap<uint32_t, instruction_seq> &combined_buc
 
   for (int i = 0; i < N_TASKS-1; i++) {
     queue.add([=](auto &buckets) {
-      enumerate_worker(i * step, (i + 1) * step, buckets);
+      enumerate_worker(i * step, (i + 1) * step, depth, buckets);
     });
   }
   queue.add([=](auto &buckets) {
-    enumerate_worker((N_TASKS - 1) * step, n_max, buckets);
+    enumerate_worker((N_TASKS - 1) * step, n_max, depth, buckets);
   });
 
   queue.run();
@@ -346,7 +343,7 @@ int process_hashes_worker(const std::multimap<uint32_t, instruction_seq> &combin
   return nComparisons;
 }
 
-void process_hashes_concurrent(const std::multimap<uint32_t, instruction_seq> &combined_buckets, uint64_t hash_min, uint64_t hash_max) {
+void process_hashes_concurrent(const std::multimap<uint32_t, instruction_seq> &combined_buckets, std::vector<std::pair<instruction_seq, instruction_seq>> optimizations, uint64_t hash_min, uint64_t hash_max) {
   std::cout << "Starting processing of hashes" << std::endl;
 
   constexpr int N_TASKS = 1024;
@@ -367,44 +364,23 @@ void process_hashes_concurrent(const std::multimap<uint32_t, instruction_seq> &c
   std::cout << "Done processing hashes." << std::endl;
   for (auto &thread_context : queue.stores) {
     std::cout << "One thread found " << thread_context.optimizations.size() << std::endl;
+    optimizations.insert(
+      optimizations.end(),
+      thread_context.optimizations.begin(),
+      thread_context.optimizations.end());
   }
 }
 
 int main() {
-  /*
-  z3::context c;
-  z3::solver s(c);
-  abstract_machine m1(c);
-  abstract_machine m2(c);
-  opcode ops1[] {
-    { CMP, ZeroPageX0 },
-    { STX, ZeroPage1 },
-    { STA, ZeroPage1 }
-  };
-  opcode ops2[] {
-    { CPY, Immediate1 },
-    { CMP, ZeroPageX0 },
-    { STA, ZeroPage1 }
-  };
-  m1.instruction(ops1[0]);
-  m1.instruction(ops1[1]);
-  m1.instruction(ops1[2]);
-  m2.instruction(ops2[0]);
-  m2.instruction(ops2[1]);
-  std::cout << cycles(std::make_tuple(ops2[0], ops2[1], ops2[2])) << std::endl;
-  std::cout << equivalent(s, m1, m2) << std::endl;
-  exit(0);
-  */
   try {
     std::multimap<uint32_t, instruction_seq> combined_buckets;
-    enumerate_concurrent(combined_buckets);
-    constexpr int num_segments = 1;
-    for (uint64_t i = 0; i < 0x100000000; i += 0x100000000 / num_segments) {
-      process_hashes_concurrent(combined_buckets, i, i + 0x100000000 / num_segments);
-      std::cout << "Reseting memory" << std::endl;
-      Z3_reset_memory();
-      std::cout << "Done reseting." << std::endl;
-    }
+    std::vector<std::pair<instruction_seq, instruction_seq>> optimizations;
+    enumerate_concurrent(3, combined_buckets);
+    process_hashes_concurrent(combined_buckets, optimizations, 0, 0x100000000);
+    /*for (const auto &pair : optimizations) {
+      const auto &original = pair.first;
+      
+    }*/
   } catch (z3::exception & ex) {
     std::cout << "unexpected error: " << ex << "\n";
   }

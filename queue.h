@@ -2,7 +2,7 @@
 #include <vector>
 #include <mutex>
 
-static const int N_THREADS = 1;//std::thread::hardware_concurrency();
+static const int N_THREADS = std::thread::hardware_concurrency();
 
 template<typename ThreadStorage>
 struct work_queue {

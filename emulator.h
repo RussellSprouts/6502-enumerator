@@ -1,6 +1,7 @@
 
 #pragma once
 
+#include <vector>
 #include "opcode.h"
 #include "operations.h"
 
@@ -24,6 +25,11 @@ struct instruction_seq {
       }
     }
     return copy;
+  }
+
+  std::vector<instruction_seq> alternates() {
+    std::vector<instruction_seq> result;
+    return result;
   }
 };
 

@@ -3,6 +3,7 @@
 #include "z3++.h"
 #include <vector>
 #include <map>
+#include <unordered_set>
 #include <thread>
 #include <algorithm>
 
@@ -146,36 +147,40 @@ bool is_canonical(instruction_seq ops) {
 
 const static int N_INSTRUCTIONS = (sizeof opcodes) / (sizeof opcodes[0]);
 
-void enumerate_recursive(uint32_t i_min, uint32_t i_max, const random_machine &m1, const random_machine &m2, instruction_seq path, int depth, std::multimap<uint32_t, instruction_seq> &buckets) {
+void enumerate_recursive(uint32_t i_min, uint32_t i_max, const random_machine &m1, const random_machine &m2, instruction_seq path, int depth, std::multimap<uint32_t, instruction_seq> &buckets, const std::unordered_set<instruction_seq> &non_optimal) {
   for (uint32_t i = i_min; i < i_max; i++) {
+    instruction_seq new_path = path.append(opcodes[i]);
+    if (new_path.in(non_optimal)) {
+      std::cout << "Skipping non-optimal" << std::endl;
+      continue;
+    }
     random_machine m1_copy = m1;
     random_machine m2_copy = m2;
     m1_copy.instruction(opcodes[i]);
     m2_copy.instruction(opcodes[i]);
     uint32_t hash = m1_copy.hash() ^ m2_copy.hash();
-    instruction_seq new_path = path.append(opcodes[i]);
     //std::cout << "Inserting " << hash << " ";
     //print(new_path);
     //std::cout << std::endl;
     buckets.insert(std::make_pair(hash, new_path));
     //std::cout << "done." << std::endl;
     if (depth > 1) {
-      enumerate_recursive(0, N_INSTRUCTIONS, m1, m2, new_path, depth - 1, buckets);
+      enumerate_recursive(0, N_INSTRUCTIONS, m1, m2, new_path, depth - 1, buckets, non_optimal);
     }
   }
 }
 
-void enumerate_worker(uint32_t i_min, uint32_t i_max, int depth, std::multimap<uint32_t, instruction_seq> &buckets) {
+void enumerate_worker(uint32_t i_min, uint32_t i_max, int depth, std::multimap<uint32_t, instruction_seq> &buckets, const std::unordered_set<instruction_seq> &non_optimal) {
   
   std::cout << i_min << std::endl;
 
   random_machine m1(0xFFA4BCAD);
   random_machine m2(0x4572849E);
   instruction_seq path;
-  enumerate_recursive(i_min, i_max, m1, m2, path, depth, buckets);
+  enumerate_recursive(i_min, i_max, m1, m2, path, depth, buckets, non_optimal);
 }
 
-void enumerate_concurrent(int depth, std::multimap<uint32_t, instruction_seq> &combined_buckets) {
+void enumerate_concurrent(int depth, std::multimap<uint32_t, instruction_seq> &combined_buckets, const std::unordered_set<instruction_seq> &non_optimal) {
   std::cout << "Starting " << N_THREADS << " threads." << std::endl;
 
   work_queue<std::multimap<uint32_t, instruction_seq>> queue;
@@ -187,11 +192,11 @@ void enumerate_concurrent(int depth, std::multimap<uint32_t, instruction_seq> &c
 
   for (int i = 0; i < N_TASKS-1; i++) {
     queue.add([=](auto &buckets) {
-      enumerate_worker(i * step, (i + 1) * step, depth, buckets);
+      enumerate_worker(i * step, (i + 1) * step, depth, buckets, non_optimal);
     });
   }
   queue.add([=](auto &buckets) {
-    enumerate_worker((N_TASKS - 1) * step, n_max, depth, buckets);
+    enumerate_worker((N_TASKS - 1) * step, n_max, depth, buckets, non_optimal);
   });
 
   queue.run();
@@ -343,7 +348,7 @@ int process_hashes_worker(const std::multimap<uint32_t, instruction_seq> &combin
   return nComparisons;
 }
 
-void process_hashes_concurrent(const std::multimap<uint32_t, instruction_seq> &combined_buckets, std::vector<std::pair<instruction_seq, instruction_seq>> optimizations, uint64_t hash_min, uint64_t hash_max) {
+void process_hashes_concurrent(const std::multimap<uint32_t, instruction_seq> &combined_buckets, std::vector<std::pair<instruction_seq, instruction_seq>> &optimizations, uint64_t hash_min, uint64_t hash_max) {
   std::cout << "Starting processing of hashes" << std::endl;
 
   constexpr int N_TASKS = 1024;
@@ -373,14 +378,22 @@ void process_hashes_concurrent(const std::multimap<uint32_t, instruction_seq> &c
 
 int main() {
   try {
+    std::unordered_set<instruction_seq> non_optimal;
     std::multimap<uint32_t, instruction_seq> combined_buckets;
     std::vector<std::pair<instruction_seq, instruction_seq>> optimizations;
-    enumerate_concurrent(3, combined_buckets);
+    enumerate_concurrent(2, combined_buckets, non_optimal);
     process_hashes_concurrent(combined_buckets, optimizations, 0, 0x100000000);
-    /*for (const auto &pair : optimizations) {
+    std::cout << "Done processing, now results" << std::endl;
+    for (const auto &pair : optimizations) {
       const auto &original = pair.first;
-      
-    }*/
+      non_optimal.insert(original);
+    }
+    combined_buckets.clear();
+    enumerate_concurrent(3, combined_buckets, non_optimal);
+    process_hashes_concurrent(combined_buckets, optimizations, 0, 0x100000000);
+
+    std::cout << "Size: " << non_optimal.size() << std::endl;
+
   } catch (z3::exception & ex) {
     std::cout << "unexpected error: " << ex << "\n";
   }

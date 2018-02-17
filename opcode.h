@@ -24,7 +24,6 @@ struct opcode {
 
 const opcode opcode::zero = opcode { (Operations)0, (AddrMode)0 };
 
-
 opcode opcodes[] = {
   { ADC, Immediate0 },
   // { AND, Immediate0 }, // same as LDA #0

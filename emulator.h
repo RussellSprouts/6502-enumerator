@@ -2,12 +2,14 @@
 #pragma once
 
 #include <vector>
+#include <unordered_set>
 #include "opcode.h"
 #include "operations.h"
 
 typedef std::tuple<opcode, opcode> instruction2;
 //typedef std::tuple<opcode, opcode, opcode> instruction_seq;
 typedef std::tuple<opcode, opcode, opcode, opcode> instruction4;
+
 
 struct instruction_seq {
   const static int max_length;
@@ -31,7 +33,52 @@ struct instruction_seq {
     std::vector<instruction_seq> result;
     return result;
   }
+
+  bool operator==(const instruction_seq &other) const {
+    for (int i = 0; i < max_length; i++) {
+      if (ops[i] != other.ops[i]) return false;
+    }
+    return true;
+  }
+
+  bool in(const std::unordered_set<instruction_seq> &set) const;
+
 };
+
+namespace std {
+  template <> struct hash<opcode>
+  {
+    size_t operator()(const opcode &x) const
+    {
+      return std::hash<size_t>{}(std::hash<uint8_t>{}((uint8_t&)x.op) ^ std::hash<uint8_t>{}((uint8_t&)x.mode));
+      /* your code here, e.g. "return hash<int>()(x.value);" */
+    }
+  };
+
+  template <> struct hash<instruction_seq>
+  {
+    size_t operator()(const instruction_seq &x) const
+    {
+      size_t result = 0;
+      for (int i = 0; i < instruction_seq::max_length; i++) {
+        result ^= std::hash<opcode>{}(x.ops[i]);
+        result *= 1337;
+      }
+      return std::hash<size_t>{}(result);
+    }
+  };
+}
+
+bool instruction_seq::in(const std::unordered_set<instruction_seq> &set) const {
+  if (set.find(*this) != set.end()) { return true; }
+  for (int i = 0; i < max_length - 1; i++) {
+    instruction_seq s;
+    s.append(this->ops[i]);   
+    s.append(this->ops[i+1]);
+    if (set.find(s) != set.end()) { return true; }  
+  }
+  return false;
+}
 
 const int instruction_seq::max_length = 3;
 

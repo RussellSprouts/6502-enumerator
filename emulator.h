@@ -43,6 +43,100 @@ struct instruction_seq {
 
   bool in(const std::unordered_set<instruction_seq> &set) const;
 
+  instruction_seq canonicalize() const {
+    const int abs_start = 7;
+    const int zp_start = 0xA;
+
+    uint8_t absolute_vars[3] { 0xFF, 0xFF, 0xFF };
+    int abs = abs_start;
+    uint8_t zp_vars[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
+    int zp = zp_start;
+    bool c0_first = false;
+    bool c1_first = false;
+   
+    for (int i = 0; i < max_length; i++) {
+      if (ops[i] == opcode::zero) { break; }
+      uint8_t val = ops[i].mode & 0x0F;
+      switch (ops[i].mode & 0xF0) {
+      case 0x00: // Immediate
+         if (!(c0_first || c1_first)) {
+           if (val == 0 || 
+               val == 4 || 
+               val == 6) {
+             c0_first = true;
+           } else if (val == 1 || val == 5) {
+             c1_first = true;
+           }
+         }
+        break;
+      case 0x10: // Absolute
+      case 0x20: // AbsoluteX
+      case 0x30: // AbsoluteY
+      case 0x70: // Indirect
+        // if we see a new absolute var, give it the next
+        // value.
+        if (absolute_vars[val - abs_start] == 0xFF) {
+          absolute_vars[val - abs_start] = abs++;
+        }
+        break;
+      case 0x40: // ZeroPage
+      case 0x50: // ZeroPageX
+      case 0x60: // ZeroPageY
+      case 0x80: // IndirectX
+      case 0x90: // IndirectY
+        // if we see a new zp var, give it the next
+        // value.
+        if (zp_vars[val - zp_start] == 0xFF) {
+          zp_vars[val - zp_start] = zp++;
+        }
+        break;
+      }
+    }
+    
+    instruction_seq result;
+
+    // now return a new instruction_seq with the replacements made.
+    for (int i = 0; i < max_length; i++) {
+      if (ops[i] == opcode::zero) { break; }
+      uint8_t mode = ops[i].mode & 0xF0;
+      uint8_t operand = ops[i].mode & 0x0F;
+      Operations op = ops[i].op;
+      switch (operand) {
+      case 0:
+      case 4: // C0
+        if (c1_first) {
+          result = result.append(opcode { op, (AddrMode)(mode | (operand + 1)) });
+        }
+        else {
+          result = result.append(ops[i]);
+        }
+        break;
+      case 1:
+      case 5: // C1
+        if (c1_first) {
+          result = result.append(opcode { op, (AddrMode)(mode | (operand - 1)) });
+        }
+        else {
+          result = result.append(ops[i]);
+        }
+        break;
+      case 0x7:
+      case 0x8:
+      case 0x9: // Absolute
+        result = result.append(opcode { op, (AddrMode)(mode | absolute_vars[operand - abs_start]) });
+        break; 
+      case 0xA:
+      case 0xB:
+      case 0xC:
+      case 0xD: // ZP
+        result = result.append(opcode { op, (AddrMode)(mode | zp_vars[operand - zp_start]) });
+        break; 
+      default:
+        result = result.append(ops[i]);  
+      }
+    }
+    return result;
+  }
 };
 
 namespace std {
@@ -70,11 +164,12 @@ namespace std {
 }
 
 bool instruction_seq::in(const std::unordered_set<instruction_seq> &set) const {
-  if (set.find(*this) != set.end()) { return true; }
+  instruction_seq needle = this->canonicalize();
+  if (set.find(needle) != set.end()) { return true; }
   for (int i = 0; i < max_length - 1; i++) {
     instruction_seq s;
-    s.append(this->ops[i]);   
-    s.append(this->ops[i+1]);
+    s = s.append(needle.ops[i]);   
+    s = s.append(needle.ops[i+1]);
     if (set.find(s) != set.end()) { return true; }  
   }
   return false;

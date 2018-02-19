@@ -83,7 +83,7 @@ struct random_machine {
 // All methods that change the initial state of the machine
 // should be prefaced with E, causing them to be no-ops if
 // the machine has exited.
-#define E if (earlyExit) { return 0; }
+#define E if (earlyExit != 0) { return 0; }
 
   bool rts() {
     E; return (earlyExit = 0x0001);
@@ -92,7 +92,7 @@ struct random_machine {
     E; return (earlyExit = 0x0002);
   }
   bool jmp(uint16_t target) {
-    E; return (earlyExit = target | 0x10000);
+    E; return (earlyExit = ((uint32_t)target) | 0x10000);
   }
   bool branch(bool cond, uint16_t target) {
     E; if (cond) { return (earlyExit = target | 0x10000); }
@@ -128,11 +128,11 @@ struct random_machine {
     return val;
   }
 
-  bool uge(uint8_t first, uint8_t second) {
+  bool uge(uint8_t first, uint8_t second) const {
     return first >= second;
   }
 
-  uint16_t inline ite(bool cond, uint16_t conseq, uint16_t alter) {
+  uint16_t inline ite(bool cond, uint16_t conseq, uint16_t alter) const {
     return cond ? conseq : alter;
   }
 

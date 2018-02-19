@@ -151,7 +151,9 @@ void enumerate_recursive(uint32_t i_min, uint32_t i_max, const random_machine &m
   for (uint32_t i = i_min; i < i_max; i++) {
     instruction_seq new_path = path.append(opcodes[i]);
     if (new_path.in(non_optimal)) {
-      std::cout << "Skipping non-optimal" << std::endl;
+      //std::cout << "Skipping non-optimal ";
+      //print(new_path);
+      //std::cout << std::endl;
       continue;
     }
     random_machine m1_copy = m1;
@@ -159,13 +161,10 @@ void enumerate_recursive(uint32_t i_min, uint32_t i_max, const random_machine &m
     m1_copy.instruction(opcodes[i]);
     m2_copy.instruction(opcodes[i]);
     uint32_t hash = m1_copy.hash() ^ m2_copy.hash();
-    //std::cout << "Inserting " << hash << " ";
-    //print(new_path);
-    //std::cout << std::endl;
     buckets.insert(std::make_pair(hash, new_path));
     //std::cout << "done." << std::endl;
     if (depth > 1) {
-      enumerate_recursive(0, N_INSTRUCTIONS, m1, m2, new_path, depth - 1, buckets, non_optimal);
+      enumerate_recursive(0, N_INSTRUCTIONS, m1_copy, m2_copy, new_path, depth - 1, buckets, non_optimal);
     }
   }
 }
@@ -218,6 +217,13 @@ bool compare_by_length(const instruction_seq &a, const instruction_seq &b) {
 
 struct process_hashes_thread_context {
   std::vector<std::pair<instruction_seq, instruction_seq>> optimizations;
+  z3::context &context;
+  z3::solver &solver;
+
+  process_hashes_thread_context()
+    : context(*new z3::context()),
+      solver(*new z3::solver(context)) {
+  }
 };
 
 int process_hashes_worker(const std::multimap<uint32_t, instruction_seq> &combined_buckets, process_hashes_thread_context &ctx, uint64_t hash_min, uint64_t hash_max, bool try_split);

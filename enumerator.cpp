@@ -228,14 +228,14 @@ int process_sequences(std::vector<instruction_seq> &sequences, process_hashes_th
     return 0; // this instruction sequence must be unique.
   }
   int l = cycles(sequences[0]);
-  bool differentLengths = false;
+  bool different_costs = false;
   for (auto sequence : sequences) {
     if (cycles(sequence) != l) {
-      differentLengths = true;
+      different_costs = true;
       break;
     }
   }
-  if (!differentLengths) {
+  if (!different_costs) {
     return 0; // all of these instructions have the same cost -- no optimizations are possible.
   }
 
@@ -354,6 +354,10 @@ int process_hashes_worker(const std::multimap<uint32_t, instruction_seq> &combin
   return nComparisons;
 }
 
+void retry_timed_out() {
+
+}
+
 void process_hashes_concurrent(const std::multimap<uint32_t, instruction_seq> &combined_buckets, std::vector<std::pair<instruction_seq, instruction_seq>> &optimizations, uint64_t hash_min, uint64_t hash_max) {
   std::cout << "Starting processing of hashes" << std::endl;
 
@@ -373,12 +377,28 @@ void process_hashes_concurrent(const std::multimap<uint32_t, instruction_seq> &c
   queue.run();
 
   std::cout << "Done processing hashes." << std::endl;
+
+  std::vector<std::pair<instruction_seq, instruction_seq>> timed_out;
+
   for (auto &thread_context : queue.stores) {
     std::cout << "One thread found " << thread_context.optimizations.size() << std::endl;
     optimizations.insert(
       optimizations.end(),
       thread_context.optimizations.begin(),
       thread_context.optimizations.end());
+    timed_out.insert(
+      timed_out.end(),
+      thread_context.timed_out.begin(),
+      thread_context.timed_out.end());
+  }
+
+  std::cout << "TIMED OUT COMPARISONS: " << timed_out.size() << std::endl;
+  for (auto &pair : timed_out) {
+    std::cout << "    ";
+    print(pair.first);
+    std::cout << "<?> ";
+    print(pair.second);
+    std::cout << std::endl;
   }
 }
 

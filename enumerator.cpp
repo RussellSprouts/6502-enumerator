@@ -1,6 +1,6 @@
 
 #include "stdint.h"
-#include "z3++.h"
+#include "include/z3++.h"
 #include <vector>
 #include <map>
 #include <unordered_set>
@@ -38,7 +38,7 @@ const float cycles(const instruction_seq ops) {
   return cost;
 }
 
-bool equivalent(z3::solver &s, const abstract_machine &ma, const abstract_machine &mb) {
+z3::check_result equivalent(z3::solver &s, const abstract_machine &ma, const abstract_machine &mb) {
   s.push();
   s.add(!(
     ma._earlyExit == mb._earlyExit &&
@@ -55,18 +55,9 @@ bool equivalent(z3::solver &s, const abstract_machine &ma, const abstract_machin
     ma._memory == mb._memory
   ));
   
-  switch (s.check()) {
-  case z3::sat:
-    s.pop();
-    return false;
-  case z3::unknown:
-    // TODO: add to list of timed-out comparisons.
-    s.pop();
-    return false;
-  default:
-    s.pop();
-    return true;
-  }
+  auto result = s.check();
+  s.pop();
+  return result;
 }
 
 /**
@@ -217,12 +208,15 @@ bool compare_by_length(const instruction_seq &a, const instruction_seq &b) {
 
 struct process_hashes_thread_context {
   std::vector<std::pair<instruction_seq, instruction_seq>> optimizations;
-  z3::context &context;
-  z3::solver &solver;
+  std::vector<std::pair<instruction_seq, instruction_seq>> timed_out;
+  z3::context context;
+  z3::solver solver;
 
   process_hashes_thread_context()
-    : context(*new z3::context()),
-      solver(*new z3::solver(context)) {
+    : context(), solver(context) {
+    z3::params p(context);
+    p.set(":timeout", 1000u);
+    solver.set(p);
   }
 };
 
@@ -282,13 +276,10 @@ int process_sequences(std::vector<instruction_seq> &sequences, process_hashes_th
 
   int nComparisons = 0;
 
-  z3::context ctx;
-  z3::solver s(ctx);
-
   std::vector<abstract_machine> machines{};
   std::vector<uint16_t> operand_masks;
   for (const auto &seq : sequences) {
-    abstract_machine m(ctx);
+    abstract_machine m(thread_ctx.context);
     m.instruction(seq);
     m.simplify();
     machines.push_back(m);
@@ -313,7 +304,8 @@ int process_sequences(std::vector<instruction_seq> &sequences, process_hashes_th
         continue;
       }
       nComparisons++;
-      if (equivalent(s, machines[i], machines[j])) {
+      auto equivalence = equivalent(thread_ctx.solver, machines[i], machines[j]);
+      if (equivalence == z3::unsat) {
         thread_ctx.optimizations.push_back(std::make_pair(seq, sequences[j]));
         print(seq);
         std::cout << " <-> ";
@@ -321,6 +313,14 @@ int process_sequences(std::vector<instruction_seq> &sequences, process_hashes_th
         std::cout << " " << operand_masks[i];
         std::cout << std::endl;
         break;
+      } else if (equivalence == z3::unknown) {
+        thread_ctx.timed_out.push_back(std::make_pair(seq, sequences[j]));
+        print(seq);
+        std::cout << " <?> ";
+        print(sequences[j]);
+        std::cout << " " << operand_masks[i];
+        std::cout << " (TIMED OUT)" << std::endl;
+        
       }
     }
   }

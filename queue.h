@@ -43,10 +43,7 @@ struct work_queue {
 
   void run() {
     running = true;
-    for (int i = 0; i < N_THREADS; i++) {
-      ThreadStorage t;
-      stores.push_back(t);
-    }
+    stores = std::vector<ThreadStorage>(N_THREADS);
 
     std::thread threads[N_THREADS - 1];
     for (int i = 0; i < N_THREADS - 1; i++) {

@@ -170,6 +170,7 @@ bool instruction_seq::in(const std::unordered_set<instruction_seq> &set) const {
     instruction_seq s;
     s = s.append(needle.ops[i]);   
     s = s.append(needle.ops[i+1]);
+    s = s.canonicalize();
     if (set.find(s) != set.end()) { return true; }  
   }
   return false;

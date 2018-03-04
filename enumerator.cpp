@@ -239,6 +239,11 @@ int process_sequences(std::vector<instruction_seq> &sequences, process_hashes_th
     return 0; // all of these instructions have the same cost -- no optimizations are possible.
   }
 
+  z3::solver solver(thread_ctx.context);
+  z3::params p(thread_ctx.context);
+  p.set(":timeout", 1000u);
+  solver.set(p);
+
   if (try_split) {
     std::multimap<uint32_t, instruction_seq> buckets;
 
@@ -304,7 +309,7 @@ int process_sequences(std::vector<instruction_seq> &sequences, process_hashes_th
         continue;
       }
       nComparisons++;
-      auto equivalence = equivalent(thread_ctx.solver, machines[i], machines[j]);
+      auto equivalence = equivalent(solver, machines[i], machines[j]);
       if (equivalence == z3::unsat) {
         thread_ctx.optimizations.push_back(std::make_pair(seq, sequences[j]));
         print(seq);

@@ -1,5 +1,5 @@
 
-enumerator: enumerator.cpp
+enumerator: enumerator.cpp *.h
 	g++ -Iinclude -g -Wall -O3 -flto -Wno-reorder -std=c++14 -o enumerator enumerator.cpp -L. -lz3 -pthread
 
 run: enumerator

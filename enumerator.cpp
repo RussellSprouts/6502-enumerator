@@ -195,6 +195,7 @@ void enumerate_concurrent(int depth, std::multimap<uint32_t, instruction_seq> &c
   for (auto &buckets : queue.stores) {
     std::cout << "Processing some buckets (" << buckets.size() << ")" << std::endl;
     combined_buckets.insert(buckets.begin(), buckets.end());
+    buckets.clear();
   }
   
 }
@@ -416,6 +417,18 @@ int main() {
     }
     combined_buckets.clear();
     enumerate_concurrent(3, combined_buckets, non_optimal);
+    std::cout << "Done with enumeration -- now processing" << std::endl;
+    uint32_t lastHash = 0xFFFFFFFF;
+    for (const auto &pair : combined_buckets) {
+      const auto hash = pair.first;
+      const auto seq = pair.second;
+      if (hash != lastHash) {
+        std::cout << "-" << std::endl;
+        lastHash = hash;
+      }
+      print(seq);
+      std::cout << std::endl;
+    }
     process_hashes_concurrent(combined_buckets, optimizations, 0, 0x100000000);
 
     std::cout << "Size: " << non_optimal.size() << std::endl;

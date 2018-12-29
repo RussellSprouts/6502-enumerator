@@ -24,6 +24,9 @@ struct abstract_machine {
    * control flow exits normally.
    */
   abstract_machine(z3::context& c) :
+    c(c),
+    falsy(c.bool_val(false)),
+    truthy(c.bool_val(true)),
     _a(c.bv_const("a", 8)),
     _x(c.bv_const("x", 8)),
     _y(c.bv_const("y", 8)),
@@ -34,22 +37,43 @@ struct abstract_machine {
     _ccD(c.bool_const("ccD")),
     _ccC(c.bool_const("ccC")),
     _ccZ(c.bool_const("ccZ")),
-    absolute0(c.bv_const("absolute0", 16)),
-    absolute1(c.bv_const("absolute1", 16)),
-    absolute2(c.bv_const("absolute2", 16)),
-    zp0(c.bv_const("zp0", 8)),
-    zp1(c.bv_const("zp1", 8)),
-    zp2(c.bv_const("zp2", 8)),
-    zp3(c.bv_const("zp3", 8)),
-    c0(c.bv_const("c0", 8)),
-    c1(c.bv_const("c1", 8)),
-    literal0(c, c.num_val(0, c.bv_sort(8))),
-    literal1(c, c.num_val(1, c.bv_sort(8))),
-    falsy(c.bool_val(false)),
-    truthy(c.bool_val(true)),
-    _earlyExit(c.num_val(0, c.bv_sort(17))),
     _memory(mkArray(c)),
-    c(c) {}
+    _earlyExit(c.num_val(0, c.bv_sort(17))) {
+      std::string absoluteName("absolute");
+      for (int i = 0; i < 16; i++) {
+        absoluteVars.push_back(c.bv_const((absoluteName + std::to_string(i)).c_str(), 16));
+      }
+      
+      std::string immediateName("immedate");
+      for (int i = 0; i < 16; i++) {
+        immediateVars.push_back(c.bv_const((immediateName + std::to_string(i)).c_str(), 8));
+      }
+      
+      std::string zpName("zp");
+      for (int i = 0; i < 16; i++) {
+        zpVars.push_back(c.bv_const((zpName + std::to_string(i)).c_str(), 8));
+      }
+    }
+
+  std::vector<z3::expr> absoluteVars;
+  std::vector<z3::expr> immediateVars;
+  std::vector<z3::expr> zpVars;
+
+  z3::expr absolute(uint8_t number) {
+    return absoluteVars.at(number);
+  }
+
+  z3::expr immediate(uint8_t number) {
+    return immediateVars.at(number);
+  }
+
+  z3::expr zp(uint8_t number) {
+    return zpVars.at(number);
+  }
+
+  z3::expr constant(uint8_t number) {
+    return c.bv_val(number, 8);
+  }
 
   void simplify() {
     _a = _a.simplify();
@@ -67,21 +91,11 @@ struct abstract_machine {
   }
 
   /**
-   * Runs a set of three instructions. (Some may do nothing).
-   */
-  void instruction(const instruction_seq &ops) {
-    for (int i = 0; i < instruction_seq::max_length; i++) {
-      if (ops.ops[i] != opcode::zero) { instruction(ops.ops[i]); }
-      else { break; }
-    }
-  }
-
-  /**
    * Runs a single instruction.
    */
-  void instruction(opcode op) {
+  void instruction(instruction op) {
     emulator<abstract_machine> emu;
-    emu.instruction(*this, op.op, op.mode);
+    emu.instruction(*this, op);
   } 
 
   /**
@@ -213,19 +227,6 @@ struct abstract_machine {
   // The boolean values, as z3 exprs.
   const z3::expr falsy;
   const z3::expr truthy;
-
-  // The possible operands.
-  const z3::expr absolute0;
-  const z3::expr absolute1;
-  const z3::expr absolute2;
-  const z3::expr zp0;
-  const z3::expr zp1;
-  const z3::expr zp2;
-  const z3::expr zp3;
-  const z3::expr c0;
-  const z3::expr c1;
-  const z3::expr literal0;
-  const z3::expr literal1;
 
   /**
    * If the machine exits early because of a branch, rts, jmp, etc.,

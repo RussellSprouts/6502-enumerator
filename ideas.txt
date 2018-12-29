@@ -1,0 +1,38 @@
+Liveness checks:
+- a, x, y, flags ; 4 bytes
+
+- always live: sp, memory, ip ; 4 byte hash
+
+8 bytes: instructions (up to 4 instructions)
+
+Algorithm:
+1. Write in 0.out the maybe-live registers and
+   hash of the always live parts resulting from
+   just the initial random machines with no instructions
+   added.
+2. Load the smallest file yet to be read.
+   Sort the file by hash and then cost using a radix sort.
+   (Requires ~48 passes of the file assuming a binary radix, but can be done
+   completely outside of memory).
+
+   For each sequence in the file:
+   - Add each possible instruction to the end of the sequence.
+   - If the sequence can be optimized at all, then ignore it and continue.
+   - Calculate the new registers and hash.
+   - Output the results to the appropriate files based on cost.
+   
+   Use a merge-sort-like algorithm to find all sequences with the same
+   hash from this file and all files with lower cost. Compare them to
+   discover equivalences depending on liveness. If a sequence is unique
+   in some liveness criteria, then output it to a new file for the cost.
+   If a sequence has an unconditional optimization, then don't output it there.
+   Send all optimization patterns to the optimizations file.
+3. Swap the new file of unique sequences for the original output file.
+4. Go to 2.
+
+Memory models:
+- Model stack effects -- memory decays once it's off the stack. An interrupt
+  can trigger at any time, causing some decay of the stacks. The harware stack
+  contents can decay at any time because interrupts push 3 bytes to the stack.
+  The software stack is under our control. We can provide a red zone of a few
+  bytes

@@ -1,9 +1,10 @@
 
 #pragma once
 
+#include "instructions2.h"
 #include "stdint.h"
 
-static const int NUM_ADDRESSES = 16;
+constexpr int NUM_ADDRESSES = 16;
 
 /**
  * random_machine represents a 6502 processor with a random
@@ -27,27 +28,27 @@ struct random_machine {
     _ccD = (fnv(120)) > 0x80000000;
     _ccC = (fnv(121)) > 0x80000000;
     _ccZ = (fnv(122)) > 0x80000000;
-    absolute0 = fnv(123);
-    absolute1 = fnv(124);
-    absolute2 = fnv(125);
-    zp0 = fnv(126);
-    zp1 = fnv(127);
-    zp2 = fnv(128);
-    zp3 = fnv(129);
-    c0 = fnv(130);
-    c1 = fnv(131);
   }
 
-  void instruction(instruction_seq ops) {
-    for (int i = 0; i < instruction_seq::max_length; i++) {
-      if (ops.ops[i] != opcode::zero) { instruction(ops.ops[i]); }
-      else { break; }
-    }
+  uint16_t absolute(uint8_t number) {
+    return fnv(125 + number);
   }
 
-  void instruction(opcode op) {
+  uint8_t zp(uint8_t number) {
+    return fnv(150 + number);
+  }
+
+  uint8_t immediate(uint8_t number) {
+    return fnv(175 + number);
+  }
+
+  uint8_t constant(uint8_t number) {
+    return number;
+  }
+
+  void instruction(instruction op) {
     emulator<random_machine> emu;
-    emu.instruction(*this, op.op, op.mode);
+    emu.instruction(*this, op);
   } 
 
   uint32_t seed;
@@ -55,19 +56,9 @@ struct random_machine {
   
   uint16_t writtenAddresses[NUM_ADDRESSES];
 
-  uint16_t absolute0;
-  uint16_t absolute1;
-  uint16_t absolute2;
-
   uint8_t writtenValues[NUM_ADDRESSES];
   uint8_t numAddressesWritten = 0;
 
-  uint8_t zp0;
-  uint8_t zp1;
-  uint8_t zp2;
-  uint8_t zp3;
-  uint8_t c0;
-  uint8_t c1;
   uint8_t _a;
   uint8_t _x;
   uint8_t _y;
@@ -115,7 +106,6 @@ struct random_machine {
   // It also remembers previous stores and returns
   // consistent results.
   uint8_t read(uint16_t addr) {
-    E
     for (int i = 0; i < numAddressesWritten; i++) {
       if (writtenAddresses[i] == addr) return writtenValues[i];
     }
@@ -206,21 +196,19 @@ struct random_machine {
   uint32_t hash() {
     uint32_t hash = 2166136261;
 #define h(var) hash = (hash ^ (var)) * 16777619;
-    h(_a)
-    h(_x)
-    h(_y)
+    // h(_a)
+    // h(_x)
+    // h(_y)
     h(_sp)
-    h(_ccS)
-    h(_ccV)
-    h(_ccI)
-    h(_ccD)
-    h(_ccC)
-    h(_ccZ)
-    h(numAddressesWritten)
-    for (uint8_t i = 0; i < numAddressesWritten; i++) {
-      h(writtenAddresses[i] >> 8)
-      h(writtenAddresses[i] & 0xFF)
-      h(writtenValues[i])
+    // h(_ccS)
+    // h(_ccV)
+    // h(_ccI)
+    // h(_ccD)
+    // h(_ccC)
+    // h(_ccZ)
+    // h(numAddressesWritten)
+    for (int i = 0; i < 0x10000; i++) {
+      h(read(i));
     }
     h(earlyExit)
 #undef h

@@ -3,3 +3,7 @@ enumerator
 *.swp
 *.swo
 out
+*.tmp
+enumerator2
+radix-sort
+cycles

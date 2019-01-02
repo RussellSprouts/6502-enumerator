@@ -5,7 +5,7 @@ enumerator: enumerator.cpp
 run: enumerator
 	env LD_LIBRARY_PATH=. ./enumerator
 
-enumerator2: enumerator2.cpp
+enumerator2: enumerator2.cpp *.h
 	g++ -Iinclude -g -Wall -O3 -flto -Wno-reorder -std=c++14 -o enumerator2 enumerator2.cpp -L. -lz3 -pthread
 
 run2: enumerator2

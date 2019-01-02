@@ -45,7 +45,7 @@ struct emulator {
       immediateVar = m.immediate(ins.number());
       break;
     case addr_mode::CONSTANT:
-      immediateVar = m.constant(ins.number());
+      immediateVar = m.constant(addr_mode_constant_values[ins.number()]);
     }
 
     // If we aren't using the immediate operand, then read the address we found.

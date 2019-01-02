@@ -196,17 +196,16 @@ struct random_machine {
   uint32_t hash() {
     uint32_t hash = 2166136261;
 #define h(var) hash = (hash ^ (var)) * 16777619;
-    // h(_a)
-    // h(_x)
-    // h(_y)
+    h(_a)
+    h(_x)
+    h(_y)
     h(_sp)
-    // h(_ccS)
-    // h(_ccV)
-    // h(_ccI)
-    // h(_ccD)
-    // h(_ccC)
-    // h(_ccZ)
-    // h(numAddressesWritten)
+    h(_ccS)
+    h(_ccV)
+    h(_ccI)
+    h(_ccD)
+    h(_ccC)
+    h(_ccZ)
     for (int i = 0; i < 0x10000; i++) {
       h(read(i));
     }

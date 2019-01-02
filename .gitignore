@@ -2,6 +2,7 @@
 enumerator
 *.swp
 *.swo
+*.swn
 out
 *.tmp
 enumerator2

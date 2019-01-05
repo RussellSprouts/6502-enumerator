@@ -12,6 +12,7 @@
 #include "abstract_machine.h"
 #include "fnv.h"
 #include "radix-sort.h"
+#include <gperftools/profiler.h>
 
 constexpr int max_cost = 140;
 
@@ -37,21 +38,10 @@ z3::check_result canBeDifferent(z3::solver &s, const abstract_machine &ma, const
   return result;
 }
 
-void write_seq(std::vector<std::ofstream> &outfiles, instruction_seq &seq) {
-  //outfiles[seq.cycles].write(seq.data(), seq.data_size());
-}
-
 typedef struct execution_hash {
-  typedef std::array<uint8_t, 18> buffer_t;
+  typedef std::array<uint8_t, 8> buffer_t;
 
   uint64_t alwaysIncluded;
-  uint16_t a;
-  uint16_t x;
-  uint16_t y;
-  uint16_t ccS;
-  uint16_t ccV;
-  uint16_t ccC;
-  uint16_t ccZ;
 
   buffer_t as_buffer() const {
     buffer_t result = {0};
@@ -80,71 +70,54 @@ typedef struct execution_hash {
   }
 } execution_hash;
 
+static const random_machine initial_machines[16] {
+  // machines with all 0s or all 1s
+  random_machine(0),
+  random_machine(0xffffffff),
+  // simple patterns
+  random_machine(0x12345678),
+  random_machine(0xCAFEFACE),
+  // hex digits of PI
+  random_machine(0x243F6A88),
+  random_machine(0x85A308D3),
+  random_machine(0x13198A2E),
+  random_machine(0x03707344),
+  random_machine(0xA4093822),
+  random_machine(0x299F31D0),
+  random_machine(0x082EFA98),
+  random_machine(0xEC4E6C89),
+  random_machine(0x452821E6),
+  random_machine(0x38D01377),
+  random_machine(0xBE5466CF),
+  random_machine(0x34E90C6C),
+};
+
 execution_hash hash(instruction_seq seq) {
-  random_machine rms[16] {
-    // machines with all 0s or all 1s
-    random_machine(0),
-    random_machine(0xffffffff),
-    // simple patterns
-    random_machine(0x12345678),
-    random_machine(0xCAFEFACE),
-    // hex digits of PI
-    random_machine(0x243F6A88),
-    random_machine(0x85A308D3),
-    random_machine(0x13198A2E),
-    random_machine(0x03707344),
-    random_machine(0xA4093822),
-    random_machine(0x299F31D0),
-    random_machine(0x082EFA98),
-    random_machine(0xEC4E6C89),
-    random_machine(0x452821E6),
-    random_machine(0x38D01377),
-    random_machine(0xBE5466CF),
-    random_machine(0x34E90C6C),
-  };
+  random_machine rms[16];
+  memcpy(rms, initial_machines, sizeof(rms));
+  emulator<random_machine> emu;
   for (auto instruction : seq.instructions) {
     for (auto &rm : rms) {
-      rm.instruction(instruction);
+      emu.instruction(rm, instruction);
     }
   }
 
   const uint32_t seed = 0x18480949;
   fnv_hash hash_all(seed);
-  fnv_hash hash_a(seed);
-  fnv_hash hash_x(seed);
-  fnv_hash hash_y(seed);
-  fnv_hash hash_ccS(seed);
-  fnv_hash hash_ccV(seed);
-  fnv_hash hash_ccC(seed);
-  fnv_hash hash_ccZ(seed);
-  for (auto rm : rms) {
+  for (auto &rm : rms) {
     hash_all.add(rm.hash());
-    hash_a.add(rm._a);
-    hash_x.add(rm._x);
-    hash_y.add(rm._y);
-    hash_ccS.add((uint8_t)(rm._ccS != 0));
-    hash_ccV.add((uint8_t)(rm._ccV != 0));
-    hash_ccC.add((uint8_t)(rm._ccC != 0));
-    hash_ccZ.add((uint8_t)(rm._ccZ != 0));
   }
   
   return execution_hash {
     .alwaysIncluded = hash_all.hash64(),
-    .a = hash_a.hash16(),
-    .x = hash_x.hash16(),
-    .y = hash_y.hash16(),
-    .ccS = hash_ccS.hash16(),
-    .ccV = hash_ccV.hash16(),
-    .ccC = hash_ccC.hash16(),
-    .ccZ = hash_ccZ.hash16(),
   };
 }
 
 typedef struct hash_output_file {
   static const int hash_size_used = 8;
-  static const int hash_size = 18;
+  static const int hash_size = 8;
   static const int instructions_size = 14;
-  static const int total_size = 32;
+  static const int total_size = 22;
   std::ofstream file;
 
   hash_output_file(uint8_t cost, bool trunc) : file("out/result-" + std::to_string(cost) + ".dat", std::ofstream::binary | std::ofstream::out | (trunc ? std::ofstream::trunc : std::ofstream::app)) {}
@@ -238,7 +211,7 @@ typedef struct output_file_manager {
   }
 
   hash_output_file &get_file(uint8_t cost) {
-    return outfiles[cost - start];
+    return outfiles.at(cost - start);
   }
 } output_file_manager;
 
@@ -282,8 +255,8 @@ int main(int argc, char **argv) {
 
     std::cout << "Opening " << arg2 << std::endl;
     while (!view_file.eof()) {
-      char buffer[4096];
-      view_file.read(buffer, 4096);
+      char buffer[hash_output_file::total_size * 256];
+      view_file.read(buffer, hash_output_file::total_size * 256);
       std::streamsize dataSize = view_file.gcount();
       for (int j = 0; j < dataSize; j += hash_output_file::total_size) {
         display_hash_result((uint8_t*)(buffer + j));
@@ -299,6 +272,8 @@ int main(int argc, char **argv) {
     std::cout << "Sorting file:" << std::endl;
     radix_sort(file_name.c_str(), hash_output_file::total_size, hash_output_file::hash_size_used * 8);
 
+    ProfilerStart("gperf-profile.log");
+
     std::ifstream view_file(file_name, std::ifstream::binary | std::ifstream::in);
     // For each instruction type
     for (const auto &ins_info : instructions) {
@@ -312,8 +287,8 @@ int main(int argc, char **argv) {
         view_file.seekg(0, std::ifstream::beg);
         // For each section of the file
         while (!view_file.eof()) {
-          char buffer[4096];
-          view_file.read(buffer, 4096);
+          char buffer[hash_output_file::total_size * 256];
+          view_file.read(buffer, hash_output_file::total_size * 256);
           std::streamsize data_size = view_file.gcount();
           // For each instruction sequence hash in the file
           for (int buffer_start = 0; buffer_start < data_size; buffer_start += hash_output_file::total_size) {
@@ -342,5 +317,7 @@ int main(int argc, char **argv) {
         }
       }
     }
+
+    ProfilerStop();
   }
 }

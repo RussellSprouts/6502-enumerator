@@ -12,6 +12,8 @@ static inline bool get_bit(const char *buf, const int bit) {
 }
 
 static void radix_sort(const char *file, const uint8_t size, const uint8_t bits) {
+  const int buffer_size = size * 256;
+
   // Read the input file and output to out0 or out1.
   {
     std::ifstream input(file, std::ifstream::in | std::ifstream::binary);
@@ -20,8 +22,8 @@ static void radix_sort(const char *file, const uint8_t size, const uint8_t bits)
     std::ofstream out1("out1.tmp", std::ofstream::out | std::ofstream::trunc | std::ofstream::binary);
 
     while (!input.eof()) {
-      char buffer[4096];
-      input.read(buffer, 4096);
+      char buffer[buffer_size];
+      input.read(buffer, buffer_size);
       std::streamsize dataSize = input.gcount();
       for (int j = 0; j < dataSize; j += size) {
         if (get_bit(buffer + j, 0)) {
@@ -42,8 +44,8 @@ static void radix_sort(const char *file, const uint8_t size, const uint8_t bits)
     std::ifstream input0(i % 2 ? "out0.tmp" : "out0-2.tmp", std::ifstream::in | std::ifstream::binary);
     std::ifstream input1(i % 2 ? "out1.tmp" : "out1-2.tmp", std::ifstream::in | std::ifstream::binary);
     while (!input0.eof()) {
-      char buffer[4096];
-      input0.read(buffer, 4096);
+      char buffer[buffer_size];
+      input0.read(buffer, buffer_size);
       std::streamsize dataSize = input0.gcount();
       for (int j = 0; j < dataSize; j += size) {
         if (get_bit(buffer + j, i)) {
@@ -55,8 +57,8 @@ static void radix_sort(const char *file, const uint8_t size, const uint8_t bits)
     }
 
     while (!input1.eof()) {
-      char buffer[4096];
-      input1.read(buffer, 4096);
+      char buffer[buffer_size];
+      input1.read(buffer, buffer_size);
       std::streamsize dataSize = input1.gcount();
       for (int j = 0; j < dataSize; j += size) {
         if (get_bit(buffer + j, i)) {
@@ -74,15 +76,15 @@ static void radix_sort(const char *file, const uint8_t size, const uint8_t bits)
     std::ofstream output(file, std::ofstream::out | std::ofstream::trunc | std::ofstream::binary);
 
     while (!input0.eof()) {
-      char buffer[4096];
-      input0.read(buffer, 4096);
+      char buffer[buffer_size];
+      input0.read(buffer, buffer_size);
       std::streamsize dataSize = input0.gcount();
       output.write(buffer, dataSize);
     }
 
     while (!input1.eof()) {
-      char buffer[4096];
-      input1.read(buffer, 4096);
+      char buffer[buffer_size];
+      input1.read(buffer, buffer_size);
       std::streamsize dataSize = input1.gcount();
       output.write(buffer, dataSize);
     }

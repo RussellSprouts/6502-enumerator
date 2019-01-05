@@ -3,7 +3,7 @@
 
 template<typename machine>
 struct emulator {
-  void instruction(machine &m, instruction ins) {
+  void instruction(machine &m, const instruction ins) const {
     if (ins.name() == instruction_name::NONE) {
       return;
     }

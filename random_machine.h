@@ -3,6 +3,7 @@
 
 #include "instructions2.h"
 #include "stdint.h"
+#include "string.h"
 
 constexpr int NUM_ADDRESSES = 16;
 
@@ -16,8 +17,33 @@ struct random_machine {
   static const bool falsy = false;
   static const bool truthy = true;
 
+  random_machine() {}
+
+  uint32_t init;
+
   random_machine(uint32_t _seed) {
     seed = _seed;
+    init = 2166136261;
+    init = (init ^ (seed & 0xFF)) * 16777619;
+    init = (init ^ ((seed >> 8) & 0xFF)) * 16777619;
+    init = (init ^ ((seed >> 16) & 0xFF)) * 16777619;
+    init = (init ^ ((seed >> 24) & 0xFF)) * 16777619;
+
+    absoluteVars[0] = fnv(125);
+    absoluteVars[1] = fnv(126);
+    absoluteVars[2] = fnv(127);
+    absoluteVars[3] = fnv(128);
+
+    zpVars[0] = fnv(150);
+    zpVars[1] = fnv(151);
+    zpVars[2] = fnv(152);
+    zpVars[3] = fnv(153);
+
+    immediateVars[0] = fnv(175);
+    immediateVars[1] = fnv(176);
+    immediateVars[2] = fnv(177);
+    immediateVars[3] = fnv(178);
+
     _a = fnv(113);
     _x = fnv(114);
     _y = fnv(115);
@@ -30,19 +56,23 @@ struct random_machine {
     _ccZ = (fnv(122)) > 0x80000000;
   }
 
-  uint16_t absolute(uint8_t number) {
-    return fnv(125 + number);
+  uint16_t absoluteVars[4];
+  uint16_t absolute(uint8_t number) const {
+    return absoluteVars[number];
+    // return fnv(125 + number);
   }
 
-  uint8_t zp(uint8_t number) {
-    return fnv(150 + number);
+  uint8_t zpVars[4];
+  uint8_t zp(uint8_t number) const {
+    return zpVars[number];
   }
 
-  uint8_t immediate(uint8_t number) {
-    return fnv(175 + number);
+  uint8_t immediateVars[4];
+  uint8_t immediate(uint8_t number) const {
+    return immediateVars[number];
   }
 
-  uint8_t constant(uint8_t number) {
+  uint8_t constant(uint8_t number) const {
     return number;
   }
 
@@ -105,7 +135,7 @@ struct random_machine {
   // filled memory space using the fnv hash.
   // It also remembers previous stores and returns
   // consistent results.
-  uint8_t read(uint16_t addr) {
+  uint8_t read(uint16_t addr) const {
     for (int i = 0; i < numAddressesWritten; i++) {
       if (writtenAddresses[i] == addr) return writtenValues[i];
     }
@@ -157,25 +187,21 @@ struct random_machine {
 
 #undef E
 
-  uint16_t extend(uint8_t val) {
+  uint16_t extend(uint8_t val) const {
     return val;
   }
 
   // A hash function based on the fnv hash.
   // See:
   // http://isthe.com/chongo/tech/comp/fnv/#FNV-1
-  uint32_t fnv(uint16_t value) {
+  uint32_t fnv(uint16_t value) const {
     if (seed == 0) {
       return 0;
     } else if (seed == 0xFFFFFFFF) {
       return 0xFFFFFFFF;
     }
-    uint32_t hash = 2166136261;
+    uint32_t hash = init;
     // first round use the seed.
-    hash = (hash ^ (seed & 0xFF)) * 16777619;
-    hash = (hash ^ ((seed >> 8) & 0xFF)) * 16777619;
-    hash = (hash ^ ((seed >> 16) & 0xFF)) * 16777619;
-    hash = (hash ^ ((seed >> 24) & 0xFF)) * 16777619;
     hash = hash ^ (value & 0xFF);
     hash = hash * 16777619;
     hash = hash ^ ((value & 0xFF00) >> 8);
@@ -193,7 +219,7 @@ struct random_machine {
    * The hash is basically the fnv-32 hash over the bytes
    * of the internal state of the machine.
    */
-  uint32_t hash() {
+  uint32_t hash() const {
     uint32_t hash = 2166136261;
 #define h(var) hash = (hash ^ (var)) * 16777619
     h(_a);

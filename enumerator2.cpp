@@ -1,5 +1,6 @@
 #include <fstream>
 #include <vector>
+#include <map>
 #include <array>
 #include <string>
 #include <iostream>
@@ -215,6 +216,17 @@ typedef struct output_file_manager {
   }
 } output_file_manager;
 
+typedef struct input_file_manager {
+  uint8_t end;
+  std::vector<hash_input_file> infiles;
+
+  input_file_manager(uint8_t end) : end(end) {
+    for (int i = 0; i < end; i++) {
+      infiles.push_back(hash_input_file(i));
+    }
+  }
+} input_file_manager;
+
 int main(int argc, char **argv) {
   if (argc < 2) {
     std::cerr << "Usage: " << std::endl;
@@ -252,6 +264,22 @@ int main(int argc, char **argv) {
   } else if (arg1 == "view") {
     std::string arg2(argv[2]);
     std::ifstream view_file(arg2, std::ifstream::binary | std::ifstream::in);
+
+    std::cout << "Opening " << arg2 << std::endl;
+    while (!view_file.eof()) {
+      char buffer[hash_output_file::total_size * 256];
+      view_file.read(buffer, hash_output_file::total_size * 256);
+      std::streamsize dataSize = view_file.gcount();
+      for (int j = 0; j < dataSize; j += hash_output_file::total_size) {
+        display_hash_result((uint8_t*)(buffer + j));
+      }
+    }
+  } else if (arg1 == "find-opts") {
+    std::string arg2(argv[2]);
+    std::cout << "Finding optimizations with length " << arg2 << std::endl;
+    input_file_manager in_manager(std::stoi(arg2));
+    
+    std::ifstream view_file("out/result-" + arg2 + ".dat", std::ifstream::binary | std::ifstream::in);
 
     std::cout << "Opening " << arg2 << std::endl;
     while (!view_file.eof()) {
@@ -300,9 +328,11 @@ int main(int argc, char **argv) {
               instruction ins;
               ins.data = data;
               if (ins.name() == instruction_name::NONE) { break; }
-              for (const auto info : instructions) {
+              for (const auto &info : instructions) {
                 if (ins.name() == info.ins.name() && ins.mode() == info.ins.mode()) {
-                  seq = seq.add(info);
+                  instruction_info next_instruction = info;
+                  next_instruction.ins = next_instruction.ins.number(ins.number());
+                  seq = seq.add(next_instruction);
                   break;
                 }
               }

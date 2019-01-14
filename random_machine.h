@@ -1,9 +1,11 @@
 
 #pragma once
 
+#include "instructions2.h"
 #include "stdint.h"
+#include "string.h"
 
-static const int NUM_ADDRESSES = 16;
+constexpr int NUM_ADDRESSES = 16;
 
 /**
  * random_machine represents a 6502 processor with a random
@@ -15,8 +17,33 @@ struct random_machine {
   static const bool falsy = false;
   static const bool truthy = true;
 
+  random_machine() {}
+
+  uint32_t init;
+
   random_machine(uint32_t _seed) {
     seed = _seed;
+    init = 2166136261;
+    init = (init ^ (seed & 0xFF)) * 16777619;
+    init = (init ^ ((seed >> 8) & 0xFF)) * 16777619;
+    init = (init ^ ((seed >> 16) & 0xFF)) * 16777619;
+    init = (init ^ ((seed >> 24) & 0xFF)) * 16777619;
+
+    absoluteVars[0] = fnv(125);
+    absoluteVars[1] = fnv(126);
+    absoluteVars[2] = fnv(127);
+    absoluteVars[3] = fnv(128);
+
+    zpVars[0] = fnv(150);
+    zpVars[1] = fnv(151);
+    zpVars[2] = fnv(152);
+    zpVars[3] = fnv(153);
+
+    immediateVars[0] = fnv(175);
+    immediateVars[1] = fnv(176);
+    immediateVars[2] = fnv(177);
+    immediateVars[3] = fnv(178);
+
     _a = fnv(113);
     _x = fnv(114);
     _y = fnv(115);
@@ -27,27 +54,31 @@ struct random_machine {
     _ccD = (fnv(120)) > 0x80000000;
     _ccC = (fnv(121)) > 0x80000000;
     _ccZ = (fnv(122)) > 0x80000000;
-    absolute0 = fnv(123);
-    absolute1 = fnv(124);
-    absolute2 = fnv(125);
-    zp0 = fnv(126);
-    zp1 = fnv(127);
-    zp2 = fnv(128);
-    zp3 = fnv(129);
-    c0 = fnv(130);
-    c1 = fnv(131);
   }
 
-  void instruction(instruction_seq ops) {
-    for (int i = 0; i < instruction_seq::max_length; i++) {
-      if (ops.ops[i] != opcode::zero) { instruction(ops.ops[i]); }
-      else { break; }
-    }
+  uint16_t absoluteVars[4];
+  uint16_t absolute(uint8_t number) const {
+    return absoluteVars[number];
+    // return fnv(125 + number);
   }
 
-  void instruction(opcode op) {
+  uint8_t zpVars[4];
+  uint8_t zp(uint8_t number) const {
+    return zpVars[number];
+  }
+
+  uint8_t immediateVars[4];
+  uint8_t immediate(uint8_t number) const {
+    return immediateVars[number];
+  }
+
+  uint8_t constant(uint8_t number) const {
+    return number;
+  }
+
+  void instruction(instruction op) {
     emulator<random_machine> emu;
-    emu.instruction(*this, op.op, op.mode);
+    emu.instruction(*this, op);
   } 
 
   uint32_t seed;
@@ -55,19 +86,9 @@ struct random_machine {
   
   uint16_t writtenAddresses[NUM_ADDRESSES];
 
-  uint16_t absolute0;
-  uint16_t absolute1;
-  uint16_t absolute2;
-
   uint8_t writtenValues[NUM_ADDRESSES];
   uint8_t numAddressesWritten = 0;
 
-  uint8_t zp0;
-  uint8_t zp1;
-  uint8_t zp2;
-  uint8_t zp3;
-  uint8_t c0;
-  uint8_t c1;
   uint8_t _a;
   uint8_t _x;
   uint8_t _y;
@@ -114,8 +135,7 @@ struct random_machine {
   // filled memory space using the fnv hash.
   // It also remembers previous stores and returns
   // consistent results.
-  uint8_t read(uint16_t addr) {
-    E
+  uint8_t read(uint16_t addr) const {
     for (int i = 0; i < numAddressesWritten; i++) {
       if (writtenAddresses[i] == addr) return writtenValues[i];
     }
@@ -167,25 +187,21 @@ struct random_machine {
 
 #undef E
 
-  uint16_t extend(uint8_t val) {
+  uint16_t extend(uint8_t val) const {
     return val;
   }
 
   // A hash function based on the fnv hash.
   // See:
   // http://isthe.com/chongo/tech/comp/fnv/#FNV-1
-  uint32_t fnv(uint16_t value) {
+  uint32_t fnv(uint16_t value) const {
     if (seed == 0) {
       return 0;
     } else if (seed == 0xFFFFFFFF) {
       return 0xFFFFFFFF;
     }
-    uint32_t hash = 2166136261;
+    uint32_t hash = init;
     // first round use the seed.
-    hash = (hash ^ (seed & 0xFF)) * 16777619;
-    hash = (hash ^ ((seed >> 8) & 0xFF)) * 16777619;
-    hash = (hash ^ ((seed >> 16) & 0xFF)) * 16777619;
-    hash = (hash ^ ((seed >> 24) & 0xFF)) * 16777619;
     hash = hash ^ (value & 0xFF);
     hash = hash * 16777619;
     hash = hash ^ ((value & 0xFF00) >> 8);
@@ -203,26 +219,30 @@ struct random_machine {
    * The hash is basically the fnv-32 hash over the bytes
    * of the internal state of the machine.
    */
-  uint32_t hash() {
+  uint32_t hash() const {
     uint32_t hash = 2166136261;
-#define h(var) hash = (hash ^ (var)) * 16777619;
-    h(_a)
-    h(_x)
-    h(_y)
-    h(_sp)
-    h(_ccS)
-    h(_ccV)
-    h(_ccI)
-    h(_ccD)
-    h(_ccC)
-    h(_ccZ)
-    h(numAddressesWritten)
-    for (uint8_t i = 0; i < numAddressesWritten; i++) {
-      h(writtenAddresses[i] >> 8)
-      h(writtenAddresses[i] & 0xFF)
-      h(writtenValues[i])
+#define h(var) hash = (hash ^ (var)) * 16777619
+    h(_a);
+    h(_x);
+    h(_y);
+    h(_sp);
+    h(_ccS);
+    h(_ccV);
+    h(_ccI);
+    h(_ccD);
+    h(_ccC);
+    h(_ccZ);
+
+    // For each changed address hash the address and value.
+    for (int i = 0; i < numAddressesWritten; i++) {
+      auto address = writtenAddresses[i];
+      auto value = writtenValues[i];
+      if (value != fnv(address)) {
+        h(address);
+        h(value);
+      }
     }
-    h(earlyExit)
+    h(earlyExit);
 #undef h
     return hash;
   }

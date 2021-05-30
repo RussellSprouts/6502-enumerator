@@ -18,10 +18,11 @@ Notes:
 
 --*/
 
-#ifndef Z3_H_
-#define Z3_H_
+#pragma once
 
-#include<stdio.h>
+#include <stdio.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include "z3_macros.h"
 #include "z3_api.h"
 #include "z3_ast_containers.h"
@@ -30,8 +31,6 @@ Notes:
 #include "z3_rcf.h"
 #include "z3_fixedpoint.h"
 #include "z3_optimization.h"
-#include "z3_interp.h"
 #include "z3_fpa.h"
 #include "z3_spacer.h"
-#endif
 

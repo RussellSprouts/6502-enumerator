@@ -209,7 +209,11 @@ struct concrete_machine {
     _cc_i(true),
     _cc_d(false),
     _cc_c(false),
-    _cc_z(false) {}
+    _cc_z(false),
+    _addresses_read{0},
+    _values_read{0},
+    _n_read(0)
+    {}
 
   typedef uint8_t expr8;
   typedef uint16_t expr16;
@@ -229,6 +233,12 @@ struct concrete_machine {
   bool _cc_c;
   bool _cc_z;
   bool _exited_early;
+  uint16_t _addresses_read[8];
+  uint8_t _values_read[8];
+  uint8_t _n_read;
+  uint16_t _addresses_written[8];
+  uint8_t _values_written[8];
+  uint8_t _n_written;
 
   uint8_t immediate(uint16_t val, bool is_constant) {
     return val;
@@ -266,10 +276,18 @@ struct concrete_machine {
   bool cc_z(bool val) { return _cc_z = E(val, _cc_z); }
 
   uint8_t read(uint16_t address) {
+    assert(_n_read < 8);
+    _addresses_read[_n_read] = address;
+    _values_read[_n_read] = _memory[address];
+    _n_read++;
     return _memory[address];
   }
 
   void write(uint16_t address, uint8_t val) {
+    assert(_n_written < 8);
+    _addresses_written[_n_written] = address;
+    _values_written[_n_written] = val;
+    _n_written++;
     _memory[address] = E(val, _memory[address]);
   }
 
@@ -350,6 +368,22 @@ struct abstract_machine {
     }
   }
 
+  explicit abstract_machine(z3::context& c, concrete_machine &other): abstract_machine(c) {
+    _a = ctx.bv_val(other._a, 8);
+    _x = ctx.bv_val(other._x, 8);
+    _y = ctx.bv_val(other._y, 8);
+    _sp = ctx.bv_val(other._sp, 8);
+    _cc_s = ctx.bool_val(other._cc_s);
+    _cc_v = ctx.bool_val(other._cc_v);
+    _cc_i = ctx.bool_val(other._cc_i);
+    _cc_d = ctx.bool_val(other._cc_d);
+    _cc_c = ctx.bool_val(other._cc_c);
+    _cc_z = ctx.bool_val(other._cc_z);
+
+    _exited_early = ctx.bool_val(other._exited_early);
+    _pc = ctx.bv_val(other._pc, 16);
+  }
+
   z3::expr absolute(uint16_t payload, bool is_constant) {
     if (is_constant) {
       return ctx.bv_val(payload, 16);
@@ -380,12 +414,12 @@ struct abstract_machine {
   typedef z3::expr expr8;
   typedef z3::expr expr16;
 
-  void exit(z3::expr const & address) {
+  void exit(z3::expr const address) {
     exit_if(ctx.bool_val(true), address);
   }
 
-  void exit_if(z3::expr const & cond, z3::expr const & address) {
-    _pc = E(address, _pc); 
+  void exit_if(z3::expr const cond, z3::expr const address) {
+    _pc = E(ite(cond, address, _pc), _pc); 
     _exited_early = E(cond, _exited_early);
   }
 
@@ -396,17 +430,17 @@ struct abstract_machine {
   /**
    * Writes the val to the addr given. Returns the current memory array.
    */
-  z3::expr write(z3::expr &addr, z3::expr &val) {
+  z3::expr write(z3::expr addr, z3::expr val) {
     if (addr.get_sort().bv_size() == 8) {
       addr = extend(addr);
     }
-    return _memory = E(z3::store(_memory, addr, val),_memory);
+    return _memory = E(z3::store(_memory, addr, val), _memory);
   }
 
   /**
    * Writes the val to the addr given. Returns the current memory array.
    */
-  z3::expr write(z3::expr &addr, uint8_t val) {
+  z3::expr write(z3::expr addr, uint8_t val) {
     return write(addr, ctx.bv_val(val, 8));
   }
 
@@ -417,8 +451,7 @@ struct abstract_machine {
   /**
    * Reads the value at addr and returns it as an 8-bit bitvector.
    */
-  z3::expr read(z3::expr &addr) {
-
+  z3::expr read(z3::expr addr) {
     if (addr.get_sort().bv_size() == 8) {
       addr = extend(addr);
     }
@@ -432,7 +465,7 @@ struct abstract_machine {
   /**
    * Takes an 8-bit bitvector and zero-extends it to a 16-bit bv.
    */
-  z3::expr extend(z3::expr const & val) const {
+  z3::expr extend(z3::expr const val) const {
     Z3_ast r = Z3_mk_zero_ext(ctx, 8, val);
     return z3::expr(ctx, r);
   }
@@ -440,7 +473,7 @@ struct abstract_machine {
   /**
    * If-then-else. If c, then t, else e.
    */
-  z3::expr ite(z3::expr const & c, z3::expr const & t, z3::expr const & e) const {
+  z3::expr ite(z3::expr const c, z3::expr const t, z3::expr const e) const {
     z3::check_context(c, t); z3::check_context(c, e);
     assert(c.is_bool());
     Z3_ast r = Z3_mk_ite(ctx, c, t, e);
@@ -451,81 +484,81 @@ struct abstract_machine {
   /**
    * If-then-else with 8-bit literals instead of `z3::expr`s.
    */
-  z3::expr ite(z3::expr const & cond, uint8_t t, uint8_t e) const {
+  z3::expr ite(z3::expr const cond, uint8_t t, uint8_t e) const {
     return ite(cond, ctx.num_val(t, _a.get_sort()), ctx.num_val(e, _a.get_sort()));
   }
 
   /**
    * Shifts the input left by 1.
    */
-  z3::expr shl(z3::expr const & val) const {
+  z3::expr shl(z3::expr const val) const {
     return z3::to_expr(ctx, Z3_mk_bvshl(ctx, val, ctx.num_val(1, val.get_sort())));
   }
 
   /**
    * Shifts the input right by 1 (logical shift right).
    */
-  z3::expr shr(z3::expr const & val) const {
+  z3::expr shr(z3::expr const val) const {
     return z3::to_expr(ctx, Z3_mk_bvlshr(ctx, val, ctx.num_val(1, val.get_sort())));
   }
 
   /**
    * Extracts the low byte of the 16-bit bv.
    */
-  z3::expr lobyte(z3::expr const & val) const {
+  z3::expr lobyte(z3::expr const val) const {
     return val.extract(7, 0);
   }
 
   /**
    * Extracts the high byte of the 16-bit bv.
    */
-  z3::expr hibyte(z3::expr const & val) const {
+  z3::expr hibyte(z3::expr const val) const {
     return val.extract(15, 8);
   }
 
   /**
    * Unsigned greater-than or equal.
    */
-  z3::expr uge(z3::expr const & first, z3::expr const & second) const {
+  z3::expr uge(z3::expr const first, z3::expr const second) const {
     return z3::uge(first, second);
   }
 
   /**
    * Unsigned greater-than or equal, with a constant.
    */
-  z3::expr uge(z3::expr const & first, uint8_t second) const {
+  z3::expr uge(z3::expr const first, uint8_t second) const {
     return z3::uge(first, second);
   }
 
   z3::expr from_bytes(z3::expr hi, z3::expr lo) const {
-    return (extend(hi) << 8) | extend(lo);
+    return z3::concat(hi, lo);
   }
 
   z3::expr from_bytes(uint8_t hi, z3::expr lo) const {
-    return (hi << 8) | extend(lo);
+    return from_bytes(ctx.bv_val(hi, 8), lo);
   }
 
-  z3::expr a(z3::expr const & val) { return _a = E(val, _a); }
+  z3::expr a(z3::expr const val) { return _a = E(val, _a); }
   z3::expr a(uint8_t val) { return a(ctx.bv_val(val, 8)); }
-  z3::expr x(z3::expr const & val) { return _x = E(val, _x); }
+  z3::expr x(z3::expr const val) { return _x = E(val, _x); }
   z3::expr x(uint8_t val) { return x(ctx.bv_val(val, 8)); }
-  z3::expr y(z3::expr const & val) { return _y = E(val, _y); }
+  z3::expr y(z3::expr const val) { return _y = E(val, _y); }
   z3::expr y(uint8_t val) { return y(ctx.bv_val(val, 8)); }
-  z3::expr sp(z3::expr const & val) { return _sp = E(val, _sp); }
+  z3::expr sp(z3::expr const val) { return _sp = E(val, _sp); }
   z3::expr sp(uint8_t val) { return sp(ctx.bv_val(val, 8)); }
-  z3::expr cc_s(z3::expr const & val) { return _cc_s = E(val, _cc_s); }
+  z3::expr cc_s(z3::expr const val) { return _cc_s = E(val, _cc_s); }
   z3::expr cc_s(bool val) { return cc_s(ctx.bool_val(val)); }
-  z3::expr cc_v(z3::expr const & val) { return _cc_v = E(val, _cc_v); }
+  z3::expr cc_v(z3::expr const val) { return _cc_v = E(val, _cc_v); }
   z3::expr cc_v(bool val) { return cc_v(ctx.bool_val(val)); }
-  z3::expr cc_i(z3::expr const & val) { return _cc_i = E(val, _cc_i); }
+  z3::expr cc_i(z3::expr const val) { return _cc_i = E(val, _cc_i); }
   z3::expr cc_i(bool val) { return cc_i(ctx.bool_val(val)); }
-  z3::expr cc_d(z3::expr const & val) { return _cc_d = E(val, _cc_d); }
+  z3::expr cc_d(z3::expr const val) { return _cc_d = E(val, _cc_d); }
   z3::expr cc_d(bool val) { return cc_d(ctx.bool_val(val)); }
-  z3::expr cc_c(z3::expr const & val) { return _cc_c = E(val, _cc_c); }
+  z3::expr cc_c(z3::expr const val) { return _cc_c = E(val, _cc_c); }
   z3::expr cc_c(bool val) { return cc_c(ctx.bool_val(val)); }
-  z3::expr cc_z(z3::expr const & val) { return _cc_z = E(val, _cc_z); }
+  z3::expr cc_z(z3::expr const val) { return _cc_z = E(val, _cc_z); }
   z3::expr cc_z(bool val) { return cc_z(ctx.bool_val(val)); }
-  z3::expr pc(z3::expr const & val) { return _pc = E(val, _pc); }
+  z3::expr pc(z3::expr const val) { return _pc = E(val, _pc); }
   
   void reset_early_exit() {
     _exited_early = ctx.bool_val(false);
@@ -1012,7 +1045,9 @@ struct emulator {
       m.a(set_sz(m._a & immediate_var));
       auto val = m.shr(m._a) | m.ite(m._cc_c, 0x80, 0x00);
       m.cc_c((val & 0x40) == 0x40);
-      m.cc_v(((val & 0x40) == 0x40) ^ ((val & 0x20) == 0x20));
+      auto bit6 = (val & 0x40) == 0x40;
+      auto bit5 = (val & 0x20) == 0x20;
+      m.cc_v(bit6 ^ bit5);
       m.a(set_sz(val));
       break;
       }
@@ -1333,10 +1368,7 @@ int main(int argc, char **argv) {
       uint8_t memory[0x10000];
 
       z3::context ctx;
-      z3::solver solver(ctx);
-      abstract_machine a_machine(ctx);
       concrete_machine c_machine(0, memory);
-      emulator<abstract_machine> a_emulator(a_machine);
       emulator<concrete_machine> c_emulator(c_machine);
 
       std::ifstream input(argv[1], std::ios::in | std::ios::binary);
@@ -1369,7 +1401,7 @@ int main(int argc, char **argv) {
 
         instructions++;
         
-        /*
+        
         printf("%04X  ", c_machine._pc);
 
         int i = 0, size = instruction_size(ins.payload_type);
@@ -1387,8 +1419,6 @@ int main(int argc, char **argv) {
           c_emulator.flags_to_byte(),
           c_machine._sp);
 
-        */
-
         if (memory[0x6004] != 0) {
           std::string new_status((char *)(memory + 0x6004));
           if (new_status != status) {
@@ -1397,8 +1427,50 @@ int main(int argc, char **argv) {
           }
         }
 
-        c_machine.reset_early_exit();
-        c_emulator.run(ins);
+        {
+          c_machine.reset_early_exit();
+          c_machine._n_read = 0;
+          c_machine._n_written = 0;
+          // Create an abstract machine copying the current state
+          abstract_machine a_machine(ctx, c_machine);
+          // Save the original memory state
+          auto original_memory = a_machine._memory;
+          emulator<abstract_machine> a_emulator(a_machine);
+          // Run the instruction on both machines
+          c_emulator.run(ins);
+          a_emulator.run(ins);
+          //a_machine.simplify();
+          z3::solver solver(ctx);
+          // Add assertions for the memory locations which were read.
+          for (int i = 0; i < c_machine._n_read; i++) {
+            auto equal = z3::select(original_memory, c_machine._addresses_read[i]) == c_machine._values_read[i];
+            solver.add(equal);
+          }
+
+          for (int i = 0; i < c_machine._n_written; i++) {
+            auto equal = z3::select(a_machine._memory, c_machine._addresses_written[i]) == c_machine._values_written[i];
+            solver.add(equal);
+          }
+
+          solver.add(a_machine._a == c_machine._a);
+          solver.add(a_machine._x == c_machine._x);
+          solver.add(a_machine._y == c_machine._y);
+          solver.add(a_machine._sp == c_machine._sp);
+          if (c_machine._cc_s) { solver.add(a_machine._cc_s); } else { solver.add(!a_machine._cc_s); }
+          if (c_machine._cc_v) { solver.add(a_machine._cc_v); } else { solver.add(!a_machine._cc_v); }
+          if (c_machine._cc_i) { solver.add(a_machine._cc_i); } else { solver.add(!a_machine._cc_i); }
+          if (c_machine._cc_d) { solver.add(a_machine._cc_d); } else { solver.add(!a_machine._cc_d); }
+          if (c_machine._cc_c) { solver.add(a_machine._cc_c); } else { solver.add(!a_machine._cc_c); }
+          if (c_machine._cc_z) { solver.add(a_machine._cc_z); } else { solver.add(!a_machine._cc_z); }
+          solver.add(a_machine._pc == c_machine._pc);
+          if (c_machine._exited_early) { solver.add(a_machine._exited_early); } else { solver.add(!a_machine._exited_early); }
+
+          auto result = solver.check();
+          if (result == z3::unsat) {
+            std::cout << solver << std::endl;
+            return 1;
+          }
+        }
       }
 
       exit(memory[0x6000]);
@@ -1408,4 +1480,8 @@ int main(int argc, char **argv) {
     }
 
     return 0;
+}
+
+int runTests() {
+  return 0;
 }

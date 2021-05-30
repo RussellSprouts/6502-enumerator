@@ -1,0 +1,19 @@
+
+> ./enumerator2 init
+# Sets up 0.out, with one sequence -- the empty sequence. Include its hash.
+# Also sets up each single instruction sequence in the appropriate files, with their hashes.
+# Also writes an empty optimizations.out
+
+> ./enumerator 20
+# Read optimizations.out into a tree.
+# Run radix sort to sort out/20.out by hash.
+# For each instruction sequence in 20.out, compare with instruction sequences in
+# 0.out or 20.out with the same hash and lower cost. Write any pairs that are the same to optimizations.out.
+# If the instruction sequence did not have an optimization, append each possible instruction to it and write the
+# results to the appropriate files, ignoring any that have a possible optimization.
+
+> ./enumerator 25
+> ./enumerator 30
+> ./enumerator 40
+> ./enumerator 41
+...

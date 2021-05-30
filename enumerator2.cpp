@@ -2,6 +2,7 @@
 #include <vector>
 #include <map>
 #include <array>
+#include <queue>
 #include <string>
 #include <iostream>
 #include "stdint.h"
@@ -13,6 +14,7 @@
 #include "abstract_machine.h"
 #include "fnv.h"
 #include "radix-sort.h"
+#include "file_stream.h"
 #include <gperftools/profiler.h>
 
 constexpr int max_cost = 140;
@@ -57,7 +59,7 @@ typedef struct execution_hash {
     return result;
   }
 
-  static execution_hash from_buffer(buffer_t buffer) {
+  static execution_hash from_buffer(uint8_t buffer[8]) {
     execution_hash result;
     result.alwaysIncluded = buffer[0]
       | (((uint64_t)buffer[1]) << 8)
@@ -139,38 +141,63 @@ typedef struct hash_output_file {
       file.put(instruction.data >> 8);
     }
   }
+
+  static instruction_seq seq_from_buffer(const uint8_t buf[total_size]) {
+    instruction_seq seq;
+    // For each instruction in the sequence
+    for (int i = hash_output_file::hash_size; i < hash_output_file::total_size; i += 2) {
+      uint16_t data = buf[i] | (buf[i + 1] << 8);
+      instruction ins;
+      ins.data = data;
+      if (ins.name() == instruction_name::NONE) { break; }
+      seq = seq.add(get_instruction_info(ins));
+    }
+    return seq;
+  }
 } hash_output_file;
 
-typedef struct hash_input_file {
-  std::ifstream file;
-  execution_hash last;
+typedef struct hash_sequence {
+  execution_hash hash;
+  instruction_seq seq;
 
-  hash_input_file(uint8_t cost) : file("out/result-" + std::to_string(cost) + ".dat", std::ifstream::binary | std::ifstream::in) {
-    last.alwaysIncluded = 0;
+  static hash_sequence from_buffer(uint8_t *buffer) {
+    return hash_sequence {
+      execution_hash::from_buffer(buffer),
+      hash_output_file::seq_from_buffer(buffer),
+    };
+  }
+
+  static bool get_sort_bit(const uint8_t *buffer, const uint8_t bit) {
+    if (bit < 8) {
+      instruction_seq seq = hash_output_file::seq_from_buffer(buffer);
+      return (seq.bytes >> (bit % 8)) & 1;
+    } else {
+      const int byte = buffer[bit/8 - 1];
+      return (byte >> (bit % 8)) & 1;
+    }
+  }
+} hash_sequence;
+
+typedef struct hash_input_file {
+  file_stream<hash_sequence, hash_output_file::total_size> stream;
+  uint8_t cost;
+
+  explicit hash_input_file(uint8_t cost) : cost(cost), stream("out/result-" + std::to_string(cost) + ".dat") {
   }
 
   // Assumes the input file is sorted by hash. Reads until it
   // finds items with the given hash, and returns a vector of
   // the results. Consumes input, so each hash argument must
   // be greater than the last.
-  std::vector<execution_hash> get_hashes(uint64_t hash) {
-    std::vector<execution_hash> result;
-    char buffer[hash_output_file::total_size];
-
-    if (last.alwaysIncluded == hash) {
-      result.push_back(last);
-    }
-
-    while (!file.eof() && last.alwaysIncluded <= hash) {
-      std::cout << "hash: " << last.alwaysIncluded << std::endl;
-      file.read(buffer, hash_output_file::total_size);
-      execution_hash::buffer_t hash_buffer;
-      for (uint32_t i = 0; i < hash_buffer.size(); i++) {
-        hash_buffer[i] = buffer[i];
-      }
-      last = execution_hash::from_buffer(hash_buffer);
-      if (last.alwaysIncluded == hash) {
-        result.push_back(last);
+  std::vector<instruction_seq> get_hashes(uint64_t hash) {
+    std::vector<instruction_seq> result;
+    while (stream.has_next()) {
+      if (stream.peek().hash.alwaysIncluded < hash) {
+        stream.next();
+      } else if (stream.peek().hash.alwaysIncluded == hash) {
+        result.push_back(stream.next().seq);
+      } else {
+        break;
       }
     }
 
@@ -186,32 +213,46 @@ void display_hash_result(uint8_t *buffer) {
     hash |= buffer[i];
   }
 
+  instruction_seq needle;
+  needle = needle.add(get_instruction_info(instruction(instruction_name::ADC, addr_mode::ZERO_PAGE, 0)));
+  needle = needle.add(get_instruction_info(instruction(instruction_name::LDA, addr_mode::IMMEDIATE, 0)));
+
   printf("%016" PRIx64 " ", hash);
   for (int i = hash_output_file::hash_size; i < hash_output_file::total_size; i += 2) {
     uint16_t data = buffer[i] + (buffer[i + 1] << 8);
     instruction ins;
     ins.data = data;
     if (ins.name() == instruction_name::NONE) { break; }
-    for (const auto &info : instructions) {
-      if (ins.name() == info.ins.name() && ins.mode() == info.ins.mode()) {
-        std::cout << info.desc << " " << addr_mode_operand_name(ins.mode(), ins.number()) << "; ";
-      }
-    }
-  }  
+    const auto info = get_instruction_info(ins);
+    std::cout << info.desc << " " << addr_mode_operand_name(ins.mode(), ins.number()) << "; ";
+  }
+  std::cout << std::endl;
+
+  instruction_seq seq = hash_output_file::seq_from_buffer(buffer);
+  if (seq.contains(needle)) {
+    std::cout << "FOUND THE NEEDLE" << std::endl;
+  }
+
+  std::cout << "CANONICAL:       ";
+  for (instruction ins : seq.instructions) {
+    if (ins.name() == instruction_name::NONE) { break; }
+    const auto info = get_instruction_info(ins);
+    std::cout << info.desc << " " << addr_mode_operand_name(ins.mode(), ins.number()) << "; ";
+  }
   std::cout << std::endl;
 }
 
 typedef struct output_file_manager {
-  uint8_t start;  
+  const uint8_t start;  
   std::vector<hash_output_file> outfiles;
 
-  output_file_manager(uint8_t start) : start(start) {
+  explicit output_file_manager(uint8_t start) : start(start) {
     for (int i = start; i <= max_cost; i++) {
       outfiles.push_back(hash_output_file(i, false));
     }
   }
 
-  hash_output_file &get_file(uint8_t cost) {
+  hash_output_file  &get_file(uint8_t cost) {
     return outfiles.at(cost - start);
   }
 } output_file_manager;
@@ -220,18 +261,90 @@ typedef struct input_file_manager {
   uint8_t end;
   std::vector<hash_input_file> infiles;
 
-  input_file_manager(uint8_t end) : end(end) {
+  explicit input_file_manager(uint8_t end) : end(end) {
     for (int i = 0; i < end; i++) {
       infiles.push_back(hash_input_file(i));
     }
   }
 } input_file_manager;
 
+typedef struct optimization_output_file {
+  std::ofstream file;
+  optimization_output_file(std::string path) : file(path, std::ofstream::out | std::ofstream::binary | std::ofstream::app) {}
+} optimization_output_file;
+
+void process_sequences(z3::context &ctx, uint64_t hash, const std::vector<instruction_seq> &smaller_sequences, const std::vector<instruction_seq> &sequences) {
+  z3::solver solver(ctx);
+  for (size_t i = 0; i < sequences.size(); i++) {
+    if (!sequences[i].is_canonical()) { 
+      continue;
+    }
+    abstract_machine ma(ctx);
+    ma.instructions(sequences[i]);
+
+    // Compare against smaller sequences for optimizations
+    for (size_t j = 0; j < smaller_sequences.size(); j++) {
+      abstract_machine mb(ctx);
+      mb.instructions(smaller_sequences[j]);
+      const auto result = canBeDifferent(solver, ma, mb);
+      if (result == z3::unsat) {
+        std::cout << "OPTS!: ";
+        for (const auto &ins : sequences[i].instructions) {
+          if (ins.name() == instruction_name::NONE) { break; }
+          const auto info = get_instruction_info(ins);
+          std::cout << info.desc << " " << addr_mode_operand_name(ins.mode(), ins.number()) << "; ";
+        }
+        std::cout << " AND ";
+        for (const auto &ins : smaller_sequences[j].instructions) {
+          if (ins.name() == instruction_name::NONE) { break; }
+          const auto info = get_instruction_info(ins);
+          std::cout << info.desc << " " << addr_mode_operand_name(ins.mode(), ins.number()) << "; ";
+        }
+        std::cout << std::endl;
+        goto next_sequence;
+      } else if (result == z3::unknown) {
+        std::cout << "UNKNOWN!" << std::endl;
+      }
+    }
+
+    // Compare against sequences with the same cost but fewer bytes for equivalences.
+    for (size_t j = 0; j < i && sequences[j].bytes < sequences[i].bytes; j++) { 
+      abstract_machine mb(ctx);
+      mb.instructions(sequences[j]);
+      const auto result = canBeDifferent(solver, ma, mb);
+      if (result == z3::unsat) {
+        std::cout << "SAME!: ";
+        for (const auto &ins : sequences[i].instructions) {
+          if (ins.name() == instruction_name::NONE) { break; }
+          const auto info = get_instruction_info(ins);
+          std::cout << info.desc << " " << addr_mode_operand_name(ins.mode(), ins.number()) << "; ";
+        }
+        std::cout << " AND ";
+        for (const auto &ins : sequences[j].instructions) {
+          if (ins.name() == instruction_name::NONE) { break; }
+          const auto info = get_instruction_info(ins);
+          std::cout << info.desc << " " << addr_mode_operand_name(ins.mode(), ins.number()) << "; ";
+        }
+        std::cout << std::endl;
+        goto next_sequence;
+      } else if (result == z3::unknown) {
+        std::cout << "UNKNOWN!" << std::endl;
+      }
+    }
+
+    next_sequence:;
+  }
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) {
     std::cerr << "Usage: " << std::endl;
     return 1;
   }
+
+  std::cout << "SIZE: " << sizeof(random_machine) << std::endl;
+
+  setup_instructions();
 
   // Create all of the output files.
   std::vector<hash_output_file> outfiles;
@@ -248,16 +361,11 @@ int main(int argc, char **argv) {
 
     int total_instructions = 0;
     for (auto &instruction : instructions) {
-      int variants = addr_mode_variants(instruction.ins.mode());
-      for (int variant = 0; variant < variants; variant++) {
-        total_instructions++;
-        instruction_seq seq;
-        instruction_info instruction_variant = instruction;
-        instruction_variant.ins = instruction_variant.ins.number(variant);
-        seq = seq.add(instruction_variant);
-        auto hash_result = hash(seq);
-        outfiles[seq.cycles].write(hash_result, seq);
-      }
+      total_instructions++;
+      instruction_seq seq;
+      seq = seq.add(instruction);
+      auto hash_result = hash(seq);
+      outfiles[seq.cycles].write(hash_result, seq);
     }
 
     std::cout << "Seeded " << total_instructions << " total instructions" << std::endl;
@@ -279,71 +387,72 @@ int main(int argc, char **argv) {
     std::cout << "Finding optimizations with length " << arg2 << std::endl;
     input_file_manager in_manager(std::stoi(arg2));
     
-    std::ifstream view_file("out/result-" + arg2 + ".dat", std::ifstream::binary | std::ifstream::in);
+    file_stream<hash_sequence, hash_output_file::total_size> view_file_stream("out/result-" + arg2 + ".dat");
 
     std::cout << "Opening " << arg2 << std::endl;
-    while (!view_file.eof()) {
-      char buffer[hash_output_file::total_size * 256];
-      view_file.read(buffer, hash_output_file::total_size * 256);
-      std::streamsize dataSize = view_file.gcount();
-      for (int j = 0; j < dataSize; j += hash_output_file::total_size) {
-        display_hash_result((uint8_t*)(buffer + j));
+    std::vector<instruction_seq> sequences;
+    z3::context ctx;
+    uint64_t last_hash = 0;
+
+    while (view_file_stream.has_next()) {
+      hash_sequence hs = view_file_stream.next();
+
+      if (hs.hash.alwaysIncluded != last_hash) {
+        // We just finished a set of equivalent instructions.
+        std::vector<instruction_seq> smaller_sequences;
+        for (auto &file : in_manager.infiles) {
+          const auto from_file = file.get_hashes(last_hash);
+          smaller_sequences.insert(smaller_sequences.end(), from_file.begin(), from_file.end());
+        }
+        process_sequences(ctx, last_hash, smaller_sequences, sequences);
+        sequences.clear();
       }
+
+      sequences.push_back(hs.seq);
+      last_hash = hs.hash.alwaysIncluded;
     }
-  } else {
-    int target = std::stoi(argv[1]);
+
+    std::cout << "Last sequences" << std::endl;
+    std::vector<instruction_seq> smaller_sequences;
+    for (auto &file : in_manager.infiles) {
+      std::vector<instruction_seq> from_file = file.get_hashes(last_hash);
+      smaller_sequences.insert(smaller_sequences.end(), from_file.begin(), from_file.end());
+    }
+    process_sequences(ctx, last_hash, smaller_sequences, sequences);
+  } else if (arg1 == "sort") {
+    std::string file_name = std::string("out/result-") + argv[2] + ".dat"; 
+    // sort the file by hash
+    std::cout << "Sorting file:" << std::endl;
+    radix_sort<hash_sequence>(file_name.c_str(), hash_output_file::total_size, hash_output_file::hash_size_used * 8 + 8);
+  } else if (arg1 == "enum") {
+    int target = std::stoi(argv[2]);
     output_file_manager output_files(target + 1);
-    std::string file_name = std::string("out/result-") + argv[1] + ".dat";
+    std::string file_name = std::string("out/result-") + argv[2] + ".dat";
     std::cout << "Processing sequences with length " << target << std::endl;
  
     // sort the file by hash
     std::cout << "Sorting file:" << std::endl;
-    radix_sort(file_name.c_str(), hash_output_file::total_size, hash_output_file::hash_size_used * 8);
+    radix_sort<hash_sequence>(file_name.c_str(), hash_output_file::total_size, hash_output_file::hash_size_used * 8 + 8);
 
     ProfilerStart("gperf-profile.log");
 
     std::ifstream view_file(file_name, std::ifstream::binary | std::ifstream::in);
     // For each instruction type
     for (const auto &ins_info : instructions) {
-      std::cout << "INSTRUCTION: " << (int)ins_info.ins.name() << std::endl;
-      int variants = addr_mode_variants(ins_info.ins.mode());
-      // For each variant of the instruction
-      for (int variant = 0; variant < variants; variant++) {
-        std::cout << "VARIANT: " << variant << std::endl;
-
-        view_file.clear();
-        view_file.seekg(0, std::ifstream::beg);
-        // For each section of the file
-        while (!view_file.eof()) {
-          char buffer[hash_output_file::total_size * 256];
-          view_file.read(buffer, hash_output_file::total_size * 256);
-          std::streamsize data_size = view_file.gcount();
-          // For each instruction sequence hash in the file
-          for (int buffer_start = 0; buffer_start < data_size; buffer_start += hash_output_file::total_size) {
-            uint8_t *buffer_ptr = (uint8_t*)(buffer + buffer_start);
-            instruction_seq seq;
-            // For each instruction in the sequence
-            for (int i = hash_output_file::hash_size; i < hash_output_file::total_size; i += 2) {
-              uint16_t data = buffer_ptr[i] | (buffer_ptr[i + 1] << 8);
-              instruction ins;
-              ins.data = data;
-              if (ins.name() == instruction_name::NONE) { break; }
-              for (const auto &info : instructions) {
-                if (ins.name() == info.ins.name() && ins.mode() == info.ins.mode()) {
-                  instruction_info next_instruction = info;
-                  next_instruction.ins = next_instruction.ins.number(ins.number());
-                  seq = seq.add(next_instruction);
-                  break;
-                }
-              }
-            }
-
-            instruction_info next_instruction = ins_info;
-            next_instruction.ins = next_instruction.ins.number(variant);
-            seq = seq.add(next_instruction);
-            auto hash_result = hash(seq);
-            output_files.get_file(seq.cycles).write(hash_result, seq);
-          }
+      std::cout << "INSTRUCTION: " << (int)ins_info.ins.name() << " " << (int)ins_info.ins.number() << std::endl;
+      view_file.clear();
+      view_file.seekg(0, std::ifstream::beg);
+      // For each section of the file
+      while (!view_file.eof()) {
+        char buffer[hash_output_file::total_size * 256];
+        view_file.read(buffer, hash_output_file::total_size * 256);
+        std::streamsize data_size = view_file.gcount();
+        // For each instruction sequence hash in the file
+        for (int buffer_start = 0; buffer_start < data_size; buffer_start += hash_output_file::total_size) {
+          const uint8_t *buffer_ptr = (uint8_t*)(buffer + buffer_start);
+          instruction_seq seq = hash_output_file::seq_from_buffer(buffer_ptr).add(ins_info);
+          auto hash_result = hash(seq);
+          output_files.get_file(seq.cycles).write(hash_result, seq);
         }
       }
     }

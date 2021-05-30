@@ -1,0 +1,525 @@
+events: Hits
+
+fl=(1) /build/glibc-Cl5G7W/glibc-2.23/csu/../csu/libc-start.c
+fn=(1) __libc_start_main
+cfl=(2) /home/ryan/Documents/enumerator/enumerator2.cpp
+cfn=(2) main
+calls=16 318
+291 16
+
+fl=(1)
+fn=(1)
+cfl=(2)
+cfn=(2)
+calls=375 328
+291 375
+
+fl=(1)
+fn=(1)
+cfl=??
+cfn=(3) 0xffffffffffffffff
+calls=12 0
+291 12
+
+fl=(1)
+fn=(1)
+cfl=(2)
+cfn=(2)
+calls=2 316
+291 2
+
+fl=(1)
+fn=(1)
+cfl=(2)
+cfn=(2)
+calls=3 322
+291 3
+
+fl=(1)
+fn=(1)
+cfl=(2)
+cfn=(2)
+calls=3 319
+291 3
+
+fl=(1)
+fn=(1)
+cfl=(2)
+cfn=(2)
+calls=841 327
+291 841
+
+fl=(1)
+fn=(1)
+cfl=(2)
+cfn=(2)
+calls=9 311
+291 9
+
+fl=(1)
+fn=(1)
+cfl=(2)
+cfn=(2)
+calls=40 326
+291 40
+
+fl=(1)
+fn=(1)
+cfl=(2)
+cfn=(2)
+calls=224 323
+291 224
+
+fl=(1)
+fn=(1)
+cfl=(2)
+cfn=(2)
+calls=2 314
+291 2
+
+fl=(1)
+fn=(1)
+cfl=(3) /usr/include/c++/5/bits/stl_tree.h
+cfn=(2)
+calls=1 1629
+291 1
+
+fl=(4) /build/glibc-Cl5G7W/glibc-2.23/io/../sysdeps/unix/syscall-template.S
+fn=(4) __read_nocancel
+84 7
+
+fl=(4)
+fn=(5) __write_nocancel
+84 58
+
+fl=(5) /build/glibc-Cl5G7W/glibc-2.23/misc/../sysdeps/unix/syscall-template.S
+fn=(6) writev
+84 80
+
+fl=(6) /build/glibc-Cl5G7W/glibc-2.23/string/../sysdeps/x86_64/multiarch/memcpy-avx-unaligned.S
+fn=(7) __nss_passwd_lookup
+41 2
+
+fl=(6)
+fn=(7)
+238 2
+
+fl=(2)
+fn=(8) hash
+96 75
+
+fl=(2)
+fn=(8)
+100 21
+
+fl=(2)
+fn=(8)
+101 93
+
+fl=(2)
+fn=(8)
+102 409
+
+fl=(2)
+fn=(8)
+108 17
+
+fl=(2)
+fn=(8)
+109 221
+
+fl=(2)
+fn=(8)
+115 3
+
+fl=(2)
+fn=(2)
+cfl=??
+cfn=(9) std::istream::read
+calls=9 0
+311 9
+
+fl=(2)
+fn=(2)
+314 2
+
+fl=(2)
+fn=(2)
+316 2
+
+fl=(2)
+fn=(2)
+318 16
+
+fl=(2)
+fn=(2)
+319 3
+
+fl=(2)
+fn=(2)
+322 3
+
+fl=(2)
+fn=(2)
+323 224
+
+fl=(2)
+fn=(2)
+326 40
+
+fl=(2)
+fn=(2)
+cfl=(2)
+cfn=(8)
+calls=93 101
+327 93
+
+fl=(2)
+fn=(2)
+cfl=(2)
+cfn=(8)
+calls=3 115
+327 3
+
+fl=(2)
+fn=(2)
+327 1
+
+fl=(2)
+fn=(2)
+cfl=(2)
+cfn=(8)
+calls=75 96
+327 75
+
+fl=(2)
+fn=(2)
+cfl=(2)
+cfn=(8)
+calls=21 100
+327 21
+
+fl=(2)
+fn=(2)
+cfl=(7) /home/ryan/Documents/enumerator/random_machine.h
+cfn=(8)
+calls=1 156
+327 1
+
+fl=(2)
+fn=(2)
+cfl=(2)
+cfn=(8)
+calls=17 108
+327 17
+
+fl=(2)
+fn=(2)
+cfl=(2)
+cfn=(8)
+calls=409 102
+327 409
+
+fl=(2)
+fn=(2)
+cfl=(2)
+cfn=(8)
+calls=221 109
+327 221
+
+fl=(2)
+fn=(2)
+cfl=??
+cfn=(10) std::ostream::write
+calls=110 0
+328 110
+
+fl=(2)
+fn=(2)
+cfl=??
+cfn=(11) std::ostream::put
+calls=241 0
+328 241
+
+fl=(2)
+fn=(2)
+328 24
+
+fl=(7)
+fn=(8)
+156 1
+
+fl=(3)
+fn=(2)
+1629 1
+
+fl=??
+fn=(12) std::basic_streambuf::xsgetn
+cfl=??
+cfn=(13) std::basic_filebuf::underflow
+calls=7 0
+0 7
+
+fl=??
+fn=(14) 0x139102a11290063b
+cfl=(1)
+cfn=(1)
+calls=1 291
+0 1
+
+fl=??
+fn=(15) _init
+0 12
+
+fl=??
+fn=(16) 0x02311fa323a00750
+cfl=(1)
+cfn=(1)
+calls=1 291
+0 1
+
+fl=??
+fn=(3)
+cfl=??
+cfn=(15)
+calls=12 0
+0 12
+
+fl=??
+fn=(17) 0x3051189116000563
+cfl=(1)
+cfn=(1)
+calls=1 291
+0 1
+
+fl=??
+fn=(18) 0x23601b0012930545
+cfl=(1)
+cfn=(1)
+calls=1 291
+0 1
+
+fl=??
+fn=(13)
+cfl=??
+cfn=(19) std::__basic_file::xsgetn
+calls=7 0
+0 7
+
+fl=??
+fn=(20) 0x234223a212a30663
+cfl=(1)
+cfn=(1)
+calls=1 291
+0 1
+
+fl=??
+fn=(21) std::codecvt::do_always_noconv
+0 1
+
+fl=??
+fn=(22) 0x0912019302a40640
+cfl=(1)
+cfn=(1)
+calls=1 291
+0 1
+
+fl=??
+fn=(10)
+0 13
+
+fl=??
+fn=(23) std::__timepunct::_M_initialize_timepunct
+cfl=(4)
+cfn=(5)
+calls=58 84
+0 58
+
+fl=??
+fn=(3)
+cfl=??
+cfn=(24) _start
+calls=1516 0
+0 1516
+
+fl=??
+fn=(25) 0x129201902092063b
+cfl=(1)
+cfn=(1)
+calls=1 291
+0 1
+
+fl=??
+fn=(26) std::basic_streambuf::xsputn
+cfl=(6)
+cfn=(7)
+calls=2 41
+0 2
+
+fl=??
+fn=(15)
+cfl=??
+cfn=(27) std::__once_callable
+calls=2 0
+0 2
+
+fl=??
+fn=(27)
+0 2
+
+fl=??
+fn=(28) std::basic_filebuf::overflow
+cfl=??
+cfn=(29) std::basic_filebuf::_M_convert_to_external
+calls=58 0
+0 58
+
+fl=??
+fn=(30) 0x1a002ca814a8053b
+cfl=(1)
+cfn=(1)
+calls=1 291
+0 1
+
+fl=??
+fn=(26)
+0 5
+
+fl=??
+fn=(10)
+cfl=??
+cfn=(26)
+calls=7 0
+0 7
+
+fl=??
+fn=(31) std::basic_filebuf::xsputn
+cfl=??
+cfn=(21)
+calls=1 0
+0 1
+
+fl=??
+fn=(29)
+cfl=??
+cfn=(23)
+calls=58 0
+0 58
+
+fl=??
+fn=(32) 0x2c6312a702900645
+cfl=(1)
+cfn=(1)
+calls=1 291
+0 1
+
+fl=??
+fn=(31)
+0 8
+
+fl=??
+fn=(33) std::__basic_file::xsputn_2
+cfl=(5)
+cfn=(6)
+calls=80 84
+0 80
+
+fl=??
+fn=(10)
+cfl=??
+cfn=(34) std::ostream::sentry::sentry
+calls=1 0
+0 1
+
+fl=??
+fn=(24)
+cfl=(1)
+cfn=(1)
+calls=1516 291
+0 1516
+
+fl=??
+fn=(34)
+0 61
+
+fl=??
+fn=(9)
+cfl=??
+cfn=(35) std::basic_filebuf::xsgetn
+calls=9 0
+0 9
+
+fl=??
+fn=(36) 0x037012912c920663
+cfl=(1)
+cfn=(1)
+calls=1 291
+0 1
+
+fl=??
+fn=(11)
+cfl=??
+cfn=(34)
+calls=60 0
+0 60
+
+fl=??
+fn=(35)
+cfl=??
+cfn=(12)
+calls=9 0
+0 9
+
+fl=??
+fn=(19)
+cfl=(4)
+cfn=(4)
+calls=7 84
+0 7
+
+fl=??
+fn=(31)
+cfl=??
+cfn=(33)
+calls=80 0
+0 80
+
+fl=??
+fn=(12)
+cfl=(6)
+cfn=(7)
+calls=2 238
+0 2
+
+fl=??
+fn=(11)
+cfl=??
+cfn=(28)
+calls=58 0
+0 58
+
+fl=??
+fn=(37) 0x23911f900191063b
+cfl=(1)
+cfn=(1)
+calls=1 291
+0 1
+
+fl=??
+fn=(11)
+0 123
+
+fl=??
+fn=(38) 0x12221ea902930750
+cfl=(1)
+cfn=(1)
+calls=1 291
+0 1
+
+fl=??
+fn=(10)
+cfl=??
+cfn=(31)
+calls=89 0
+0 89
+

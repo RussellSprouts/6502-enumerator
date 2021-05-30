@@ -2,6 +2,7 @@
 #pragma once
 
 #include "z3++.h"
+#include "instructions2.h"
 
 z3::expr mkArray(z3::context& c) {
   z3::sort byte = c.bv_sort(8);
@@ -23,7 +24,7 @@ struct abstract_machine {
    * arbitrary unknown value. _earlyExit is set to assume the
    * control flow exits normally.
    */
-  abstract_machine(z3::context& c) :
+  explicit abstract_machine(z3::context& c) :
     c(c),
     falsy(c.bool_val(false)),
     truthy(c.bool_val(true)),
@@ -90,25 +91,39 @@ struct abstract_machine {
     _earlyExit = _earlyExit.simplify();
   }
 
+  void instructions(const instruction_seq &seq) {
+    emulator<abstract_machine> emu;
+    for (const auto &ins : seq.instructions) {
+      if (ins.name() == instruction_name::NONE) { break; }
+      emu.instruction(*this, ins);
+    }
+  }
+
   /**
    * Runs a single instruction.
    */
   void instruction(instruction op) {
     emulator<abstract_machine> emu;
     emu.instruction(*this, op);
-  } 
+  }
 
   /**
    * Writes the val to the addr given. Returns the current memory array.
    */
-  z3::expr write(z3::expr const & addr, z3::expr const & val) {
+  z3::expr write(z3::expr &const addr, z3::expr const &const val) {
+    if (addr.get_sort().bv_size() == 8) {
+      addr = extend(addr);
+    }
     return _memory = E(z3::store(_memory, addr, val),_memory);
   }
 
   /**
    * Reads the value at addr and returns it as an 8-bit bitvector.
    */
-  z3::expr read(z3::expr const & addr) {
+  z3::expr read(z3::expr &const addr) {
+    if (addr.get_sort().bv_size() == 8) {
+      addr = extend(addr);
+    }
     return z3::select(_memory, addr);
   }
 

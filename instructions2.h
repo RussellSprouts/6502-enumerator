@@ -2,7 +2,7 @@
 
 #include "stdint.h"
 
-enum class instruction_name {
+enum class instruction_name: uint8_t {
   NONE = 0,
   ADC = 1,
   AND = 2,
@@ -68,7 +68,7 @@ enum class instruction_name {
   RORA = 61,
 };
 
-enum class addr_mode {
+enum class addr_mode: uint8_t {
   // for instructions with no operands
   NONE = 0,
   // a 16 bit address
@@ -93,6 +93,13 @@ enum class addr_mode {
   CONSTANT = 10,
 };
 
+enum class instruction_placeholder: uint8_t {
+  ABSOLUTE = 0,
+  ZP = 1,
+  IMMEDIATE = 2,
+  NONE = 3,
+};
+
 inline uint8_t addr_mode_variants(addr_mode mode) {
   switch (mode) {
   case addr_mode::NONE:
@@ -108,7 +115,7 @@ inline uint8_t addr_mode_variants(addr_mode mode) {
   case addr_mode::IMMEDIATE:
     return 4;
   case addr_mode::CONSTANT:
-    return 10;
+    return 4;
   }
   return 0;
 }
@@ -117,7 +124,129 @@ const char *addr_mode_operand_strings[] = {
   "", "absolute", "absolute", "absolute", "zp", "zp", "zp", "zp", "zp", "immediate"
 };
 
-const uint8_t addr_mode_constant_values[] = { 0, 1, 2, 4, 8, 16, 32, 64, 128, 255 };
+namespace machine_state_variable {
+  enum class type : uint16_t {
+    A = 1,
+    X = 2,
+    Y = 4,
+    SP = 8,
+    CC_S = 16,
+    CC_V = 32,
+    CC_I = 64,
+    CC_D = 128,
+    CC_C = 256,
+    CC_Z = 512,
+    MEMORY = 1024,
+    IP = 2048,
+    NONE = 0,
+  };
+
+  const auto A = type::A;
+  const auto X = type::X;
+  const auto Y = type::Y;
+  const auto SP = type::SP;
+  const auto CC_S = type::CC_S;
+  const auto CC_V = type::CC_V;
+  const auto CC_I = type::CC_I;
+  const auto CC_D = type::CC_D;
+  const auto CC_C = type::CC_C;
+  const auto CC_Z = type::CC_Z;
+  const auto MEMORY = type::MEMORY;
+  const auto IP = type::IP;
+  const auto NONE = type::NONE;
+
+  inline type operator|(type a, type b) { return static_cast<type>(static_cast<int>(a) | static_cast<int>(b)); }
+  inline type operator&(type a, type b) { return static_cast<type>(static_cast<int>(a) & static_cast<int>(b)); }
+};
+
+namespace instruction_dataflow {
+  using namespace machine_state_variable;
+
+  const std::map<instruction_name, machine_state_variable::type> inputs_by_name = {
+    { instruction_name::NONE, NONE },
+    { instruction_name::ADC, A | CC_C }, // ignore decimal mode for now
+    { instruction_name::AND, A },
+    { instruction_name::ASL, A },
+    { instruction_name::BCC, CC_C },
+    { instruction_name::BCS, CC_C },
+    { instruction_name::BEQ, CC_Z },
+    { instruction_name::BNE, CC_Z },
+    { instruction_name::BMI, CC_S },
+    { instruction_name::BPL, CC_S },
+    { instruction_name::BVC, CC_V },
+    { instruction_name::BVS, CC_V },
+    { instruction_name::BIT, A },
+    { instruction_name::BRK, NONE },
+    { instruction_name::CLC, NONE },
+    { instruction_name::CLD, NONE },
+    { instruction_name::CLI, NONE },
+    { instruction_name::CLV, NONE },
+    { instruction_name::CMP, A },
+    { instruction_name::CPX, X },
+    { instruction_name::CPY, A },
+    { instruction_name::DEC, NONE },
+    { instruction_name::EOR, A },
+    { instruction_name::INC, A },
+    { instruction_name::INX, X },
+    { instruction_name::INY, Y },
+    { instruction_name::JMP, NONE },
+    { instruction_name::JSR, NONE },
+    { instruction_name::LDA, NONE },
+    { instruction_name::LDX, NONE},
+    { instruction_name::LDY, NONE },
+    { instruction_name::LSR, A },
+    { instruction_name::NOP, NONE },
+    { instruction_name::ORA, A },
+    { instruction_name::PHA, SP | A },
+    { instruction_name::PHP, SP | CC_S | CC_V | CC_I | CC_D | CC_C | CC_Z },
+    { instruction_name::PLA, SP | MEMORY },
+    { instruction_name::PLP, SP | MEMORY },
+    { instruction_name::ROL, CC_C | MEMORY },
+    { instruction_name::ROR, CC_C | MEMORY },
+    { instruction_name::RTI, MEMORY },
+    { instruction_name::RTS, MEMORY },
+    { instruction_name::SBC, A | CC_C },
+    { instruction_name::SEC, NONE },
+    { instruction_name::SED, NONE },
+    { instruction_name::SEI, NONE },
+    { instruction_name::STA, A },
+    { instruction_name::STX, X },
+    { instruction_name::STY, Y },
+    { instruction_name::TAX, A },
+    { instruction_name::TAY, A },
+    { instruction_name::TSX, SP },
+    { instruction_name::TXA, X },
+    { instruction_name::TXS, X },
+    { instruction_name::TYA, Y },
+    { instruction_name::JMPI, MEMORY },
+    { instruction_name::LSRA, A },
+    { instruction_name::ASLA, A },
+    { instruction_name::ROLA, A | CC_C },
+    { instruction_name::RORA, A | CC_C }
+  };
+
+  const std::map<addr_mode, machine_state_variable::type> operand_inputs = {
+    { addr_mode::NONE, NONE },
+    { addr_mode::ABSOLUTE, MEMORY },
+    { addr_mode::ABSOLUTE_X, MEMORY | X },
+    { addr_mode::ABSOLUTE_Y, MEMORY | Y },
+    { addr_mode::X_INDIRECT, MEMORY | X },
+    { addr_mode::INDIRECT_Y, MEMORY | Y },
+    { addr_mode::ZERO_PAGE, MEMORY },
+    { addr_mode::ZERO_PAGE_X, MEMORY | X },
+    { addr_mode::ZERO_PAGE_Y, MEMORY | Y },
+    { addr_mode::IMMEDIATE, NONE },
+    { addr_mode::CONSTANT, NONE }
+  };
+
+  machine_state_variable::type inputs(instruction_name name, addr_mode mode) {
+    return A;
+  }
+};
+
+
+// Try to find optimizations with each power of 2, and $FF
+const uint8_t addr_mode_constant_values[] = { 0, 1, 2, 255 };
 
 std::string addr_mode_operand_name(addr_mode mode, uint8_t number) {
   if (mode == addr_mode::CONSTANT) {
@@ -160,6 +289,34 @@ typedef struct instruction {
     return result;
   }
 
+  bool operator ==(const instruction &other) const {
+    return data == other.data;
+  }
+
+  bool operator !=(const instruction &other) const {
+    return !(*this == other);
+  }
+
+  instruction_placeholder placeholder() const {
+    switch(mode()) {
+      case addr_mode::ABSOLUTE:
+      case addr_mode::ABSOLUTE_X:
+      case addr_mode::ABSOLUTE_Y:
+        return instruction_placeholder::ABSOLUTE;
+      case addr_mode::ZERO_PAGE:
+      case addr_mode::ZERO_PAGE_X:
+      case addr_mode::ZERO_PAGE_Y:
+      case addr_mode::INDIRECT_Y:
+      case addr_mode::X_INDIRECT:
+        return instruction_placeholder::ZP;
+      case addr_mode::IMMEDIATE:
+        return instruction_placeholder::IMMEDIATE;
+      case addr_mode::CONSTANT:
+      case addr_mode::NONE:
+        return instruction_placeholder::NONE;
+    }
+    return instruction_placeholder::NONE;
+  }
 } instruction;
 
 typedef struct instruction_info {
@@ -175,6 +332,9 @@ typedef struct instruction_info {
   }
 } instruction_info;
 
+struct instruction_info;
+const instruction_info &get_instruction_info(const instruction &ins);
+
 typedef struct instruction_seq {
   uint8_t cycles;
   uint8_t bytes;
@@ -187,8 +347,6 @@ typedef struct instruction_seq {
   }
 
   instruction_seq() : instruction_seq(0, 0) {}
-
-  instruction_seq(std::array<uint8_t, 16> data) {}
 
   instruction_seq add(instruction_info info) const {
     instruction_seq newSeq(this->cycles + info.cycles, this->bytes + info.bytes);
@@ -208,9 +366,123 @@ typedef struct instruction_seq {
     else if (cycles == other.cycles) { return bytes > other.bytes; }
     return false;
   }
+
+  bool operator<(const instruction_seq &other) const {
+    if (cycles < other.cycles) { return true; }
+    else if (cycles == other.cycles) { return bytes < other.bytes; }
+    return false;
+  }
+
+  bool operator==(const instruction_seq &other) const {
+    for (int i = 0; i < 7; i++) {
+      if (instructions[i] != other.instructions[i]) { return false; }
+    }
+    return true;
+  }
+  
+  /**
+   * Checks if the sequence is canonical.
+   * That means that each placeholder value, like
+   * immediate3 or absolute1, is used only if all
+   * of the lower-numbered placeholders are used first,
+   * like immediate2 and absolute0.
+   */
+  bool is_canonical() const {
+    // Map of placeholder to maximum allowed variant.
+    // For instance, if looking_for[instruction_placeholder::ABSOLUTE] == 1,
+    // then we've already seen absolute0, so both absolute0 and absolute1 are
+    // ok in a canonical sequence.
+    uint8_t looking_for[(uint8_t)instruction_placeholder::NONE] = { 0 };
+    for (const auto &ins : instructions) {
+      if (ins.placeholder() != instruction_placeholder::NONE) {
+        uint8_t number = ins.number();
+        uint8_t placeholder = (uint8_t)ins.placeholder();
+        if (number > looking_for[placeholder]) {
+          return false;
+        } else if (number == looking_for[placeholder]) {
+          looking_for[placeholder]++;
+        }
+      }
+    }
+    return true;
+  }
+
+  instruction_seq to_canonical() const {
+    instruction_seq result;
+    // Gives the assigned canonical value of the given placeholder and number.
+    // 0 indicates none assigned, while a non-zero is the assignment + 1.
+    uint8_t assignments[(uint8_t)instruction_placeholder::NONE][4] = { 0 };
+    // The next canonical placeholder to assign
+    uint8_t next[(uint8_t)instruction_placeholder::NONE] = { 0 };
+    for (const auto ins : instructions) {
+      if (ins.name() == instruction_name::NONE) { break; }
+      uint8_t number = ins.number();
+      uint8_t placeholder = (uint8_t)ins.placeholder();
+      if (placeholder == (uint8_t)instruction_placeholder::NONE) {
+        result = result.add(get_instruction_info(ins));
+      } else {
+        if (assignments[placeholder][number] == 0) {
+          // if we haven't seen this number before
+          assignments[placeholder][number] = ++next[placeholder];
+        }
+        result = result.add(get_instruction_info(ins.number(assignments[placeholder][number] - 1)));
+      }
+    }
+    return result;
+  }
+
+  // Whether the instruction seqs are the same up to the 
+  // renaming of variables.
+  bool matches_with_canonical(const instruction_seq &other) const {
+    return to_canonical() == other.to_canonical();
+  }
+
+  /**
+   * Gets the subsequence including start, up to end, exclusive
+   */
+  instruction_seq subsequence(int start = 0, int end = 7) const {
+    instruction_seq result;
+    for (int i = start; i < end; i++) {
+      result = result.add(get_instruction_info(instructions[i]));
+    }
+    return result;
+  }
+
+  /**
+   * The number of instructions in the sequence.
+   */
+  int size() const {
+    for (int i = 0; i < 7; i++) {
+      if (instructions[i].name() == instruction_name::NONE) {
+        return i;
+      }
+    }
+    return 7;
+  }
+ 
+  /**
+   * Checks if the sequence contains the other
+   * sequence. Other must be a canonical sequence.
+   */
+  bool contains(const instruction_seq &other) const {
+    int my_size = size();
+    int other_size = other.size();
+    for (int i = 0; i < my_size - other_size + 1; i++) {
+      if (instructions[i].name() == other.instructions[i].name()
+        && instructions[i].mode() == other.instructions[i].mode()) {
+        if (subsequence(i, i + other_size).to_canonical() == other) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
 } instruction_seq;
 
-static instruction_info instructions[] = {
+static std::vector<instruction_info> instructions;
+static std::map<uint16_t, instruction_info> info_by_data;
+
+static const instruction_info types_of_instructions[] = {
   { instruction(instruction_name::ADC, addr_mode::IMMEDIATE,   0), 20, 2, "adc.#" },
   { instruction(instruction_name::ADC, addr_mode::CONSTANT,    0), 20, 2, "adc.#" },
   { instruction(instruction_name::ADC, addr_mode::ZERO_PAGE,   0), 30, 2, "adc.z" },
@@ -401,3 +673,34 @@ static instruction_info instructions[] = {
   { instruction(instruction_name::STY, addr_mode::ZERO_PAGE_X, 0), 40, 2, "sty.zx" },
   { instruction(instruction_name::STY, addr_mode::ABSOLUTE,    0), 40, 3, "sty" },
 };
+
+// Some single instructions are the same
+static const instruction duplicate_instructions[] = {
+  instruction(instruction_name::ADC, addr_mode::CONSTANT, 3), // ADC #255 is the same as SBC #0
+  instruction(instruction_name::SBC, addr_mode::CONSTANT, 3), // SBC #255 is the same as ADC #0
+  instruction(instruction_name::AND, addr_mode::CONSTANT, 0), // AND #0 is the same as LDA #0
+  instruction(instruction_name::ORA, addr_mode::CONSTANT, 3), // ORA #255 is the same as LDA #255
+  instruction(instruction_name::EOR, addr_mode::CONSTANT, 0), // EOR #0 is the same as ORA #0
+  instruction(instruction_name::AND, addr_mode::CONSTANT, 3) // AND #255 is the same as ORA #0
+};
+
+void setup_instructions() {
+  for (const auto &ins_info : types_of_instructions) {
+    int variants = addr_mode_variants(ins_info.ins.mode());
+    // For each variant of the instruction
+    for (int variant = 0; variant < variants; variant++) {
+      instruction_info next_instruction = ins_info;
+      next_instruction.ins = next_instruction.ins.number(variant);
+      for (const auto duplicate : duplicate_instructions) {
+        if (next_instruction.ins == duplicate) { goto next; }
+      }
+      info_by_data.emplace(next_instruction.ins.data, next_instruction);
+      instructions.push_back(next_instruction);
+      next: ;
+    }
+  }
+}
+
+const instruction_info &get_instruction_info(const instruction &ins) {
+  return info_by_data[ins.data];
+}

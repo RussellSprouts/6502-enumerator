@@ -3,7 +3,7 @@
 
 template<typename machine>
 struct emulator {
-  void instruction(machine &m, const instruction ins) const {
+  inline void instruction(machine &m, const instruction &ins) const {
     if (ins.name() == instruction_name::NONE) {
       return;
     }
@@ -215,7 +215,7 @@ struct emulator {
       m.ccD(0x08 == (pull & 0x08));     
       m.ccI(0x04 == (pull & 0x04));     
       m.ccZ(0x02 == (pull & 0x02));     
-      m.ccC(0x01 == (pull & 0x01));     
+      m.ccC(0x01 == (pull & 0x01));
       break;
       }
     case instruction_name::SBC:

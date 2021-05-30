@@ -5,7 +5,7 @@
 #include "stdint.h"
 #include "string.h"
 
-constexpr int NUM_ADDRESSES = 16;
+constexpr int NUM_ADDRESSES = 8;
 
 /**
  * random_machine represents a 6502 processor with a random
@@ -21,7 +21,7 @@ struct random_machine {
 
   uint32_t init;
 
-  random_machine(uint32_t _seed) {
+  explicit random_machine(uint32_t _seed) {
     seed = _seed;
     init = 2166136261;
     init = (init ^ (seed & 0xFF)) * 16777619;
@@ -148,6 +148,21 @@ struct random_machine {
     return val;
   }
 
+  // Remember written values so that it returns
+  // consistent results.
+  uint8_t write(uint16_t addr, uint8_t val) {
+    E
+    for (int i = 0; i < numAddressesWritten; i++) {
+      if (addr == writtenAddresses[i]) {
+        return writtenValues[i] = val;
+      }
+    }
+    writtenAddresses[numAddressesWritten] = addr;
+    return writtenValues[numAddressesWritten++] = val;
+  }
+
+#undef E
+
   bool uge(uint8_t first, uint8_t second) const {
     return first >= second;
   }
@@ -171,21 +186,6 @@ struct random_machine {
   uint8_t inline hibyte(uint16_t val) const {
     return val >> 8;
   }
-
-  // Remember written values so that it returns
-  // consistent results.
-  uint8_t write(uint16_t addr, uint8_t val) {
-    E
-    for (int i = 0; i < numAddressesWritten; i++) {
-      if (addr == writtenAddresses[i]) {
-        return writtenValues[i] = val;
-      }
-    }
-    writtenAddresses[numAddressesWritten] = addr;
-    return writtenValues[numAddressesWritten++] = val;
-  }
-
-#undef E
 
   uint16_t extend(uint8_t val) const {
     return val;

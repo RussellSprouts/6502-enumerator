@@ -4,13 +4,13 @@
 #include <iostream>
 #include "stdint.h"
 
-// Implement this to get the bit with the given number
-// from the buffer. 0 is the least significant bit.
-static inline bool get_bit(const char *buf, const int bit) {
-  const int byte = buf[bit/8];
-  return (byte >> (bit % 8)) & 1;
-}
-
+/**
+ * Radix sorts the file with the given name, which has binary sections of size size and
+ * has an ordering defined by bits bits.
+ * t should have a static method get_sort_bit which takes a byte pointer to a section of
+ * size size and the bit, and returns the value of that bit, from least to most significant.
+ */
+template<typename t>
 static void radix_sort(const char *file, const uint8_t size, const uint8_t bits) {
   const int buffer_size = size * 256;
 
@@ -26,7 +26,7 @@ static void radix_sort(const char *file, const uint8_t size, const uint8_t bits)
       input.read(buffer, buffer_size);
       std::streamsize dataSize = input.gcount();
       for (int j = 0; j < dataSize; j += size) {
-        if (get_bit(buffer + j, 0)) {
+        if (t::get_sort_bit((uint8_t*)(buffer + j), 0)) {
           out1.write(buffer + j, size);
         } else {
           out0.write(buffer + j, size);
@@ -38,17 +38,17 @@ static void radix_sort(const char *file, const uint8_t size, const uint8_t bits)
   // Now read the previous outputs and output to new files.
   for (int i = 1; i < bits; i++) {
     std::cout << "Bit " << i << std::endl;
-    std::ofstream out0(i % 2 ? "out0-2.tmp" : "out0.tmp", std::ofstream::out | std::ofstream::trunc | std::ofstream::binary);
-    std::ofstream out1(i % 2 ? "out1-2.tmp" : "out1.tmp", std::ofstream::out | std::ofstream::trunc | std::ofstream::binary);
+    std::ofstream out0((i % 2) ? "out0-2.tmp" : "out0.tmp", std::ofstream::out | std::ofstream::trunc | std::ofstream::binary);
+    std::ofstream out1((i % 2) ? "out1-2.tmp" : "out1.tmp", std::ofstream::out | std::ofstream::trunc | std::ofstream::binary);
 
-    std::ifstream input0(i % 2 ? "out0.tmp" : "out0-2.tmp", std::ifstream::in | std::ifstream::binary);
-    std::ifstream input1(i % 2 ? "out1.tmp" : "out1-2.tmp", std::ifstream::in | std::ifstream::binary);
+    std::ifstream input0((i % 2) ? "out0.tmp" : "out0-2.tmp", std::ifstream::in | std::ifstream::binary);
+    std::ifstream input1((i % 2) ? "out1.tmp" : "out1-2.tmp", std::ifstream::in | std::ifstream::binary);
     while (!input0.eof()) {
       char buffer[buffer_size];
       input0.read(buffer, buffer_size);
       std::streamsize dataSize = input0.gcount();
       for (int j = 0; j < dataSize; j += size) {
-        if (get_bit(buffer + j, i)) {
+        if (t::get_sort_bit((uint8_t*)(buffer + j), i)) {
           out1.write(buffer + j, size);
         } else {
           out0.write(buffer + j, size);
@@ -61,7 +61,7 @@ static void radix_sort(const char *file, const uint8_t size, const uint8_t bits)
       input1.read(buffer, buffer_size);
       std::streamsize dataSize = input1.gcount();
       for (int j = 0; j < dataSize; j += size) {
-        if (get_bit(buffer + j, i)) {
+        if (t::get_sort_bit((uint8_t*)(buffer + j), i)) {
           out1.write(buffer + j, size);
         } else {
           out0.write(buffer + j, size);
@@ -71,8 +71,8 @@ static void radix_sort(const char *file, const uint8_t size, const uint8_t bits)
   }
 
   {
-    std::ifstream input0(bits % 2 ? "out0.tmp" : "out0-2.tmp", std::ifstream::in | std::ifstream::binary);
-    std::ifstream input1(bits % 2 ? "out1.tmp" : "out1-2.tmp", std::ifstream::in | std::ifstream::binary);
+    std::ifstream input0((bits % 2) ? "out0.tmp" : "out0-2.tmp", std::ifstream::in | std::ifstream::binary);
+    std::ifstream input1((bits % 2) ? "out1.tmp" : "out1-2.tmp", std::ifstream::in | std::ifstream::binary);
     std::ofstream output(file, std::ofstream::out | std::ofstream::trunc | std::ofstream::binary);
 
     while (!input0.eof()) {

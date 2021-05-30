@@ -5,7 +5,7 @@
 typedef struct fnv_hash {
   uint64_t state = 14695981039346656037u;
 
-  fnv_hash(uint32_t seed) {
+  explicit fnv_hash(uint32_t seed) {
     add(seed);
   }
 

@@ -3,12 +3,26 @@
 #include <iostream>
 #include <fstream>
 #include "z3++.h"
+#include "operations.h"
+
+#define PROCESSOR_NMOS_6502
+
+#ifdef PROCESSOR_NMOS_6502
 
 #define DECIMAL_ENABLED        false
 #define HAS_JUMP_INDIRECT_BUG  true
 
+#elif defined(PROCESSOR_65c02)
+
+#define DECIMAL_ENABLED        true
+#define HAS_JUMP_INDIRECT_BUG  false
+
+#endif
+
 enum struct instruction_name: uint8_t {
   NONE = 0,
+
+  // Basic 6502 instructions
   ADC = 1,
   AND = 2,
   ASL = 3,
@@ -66,18 +80,20 @@ enum struct instruction_name: uint8_t {
   TXS = 55,
   TYA = 56,
 
-  LSRA = 58,
-  ASLA = 59,
-  ROLA = 60,
-  RORA = 61,
+  // 65c02 additional instructions
+  PHX = 58,
+  PHY = 59,
+  PLX = 60,
+  PLY = 61,
+  RMB = 62,
+  SMB = 63,
+  STP = 64,
+  STZ = 65,
+  TRB = 66,
+  TSB = 67,
+  WAI = 68,
 
-  INCA = 62,
-  DECA = 63,
-  STZ = 64,
-  PHX = 65,
-  PHY = 66,
-  PLX = 67,
-  PLY = 68,
+  // NMOS 6502 undocumented instructions
   LAX = 69,
   SAX = 70,
   DCM = 71,
@@ -207,42 +223,23 @@ struct concrete_machine {
     _x(0),
     _y(0),
     _sp(0xFD),
-    _p(0),
-    _cc_s(false),
-    _cc_v(false),
-    _cc_i(true),
-    _cc_d(false),
-    _cc_c(false),
-    _cc_z(false),
+    _p(FLAG_ALWAYS | FLAG_I),
     _addresses_read{0},
     _values_read{0},
-    _n_read(0)
+    _n_read(0),
+    _assumptions(true)
     {}
+
+  static constexpr uint8_t FLAG_S = 0x80;
+  static constexpr uint8_t FLAG_V = 0x40;
+  static constexpr uint8_t FLAG_ALWAYS = 0x20;
+  static constexpr uint8_t FLAG_D = 0x08;
+  static constexpr uint8_t FLAG_I = 0x04;
+  static constexpr uint8_t FLAG_Z = 0x02;
+  static constexpr uint8_t FLAG_C = 0x01;
 
   typedef uint8_t expr8;
   typedef uint16_t expr16;
-
-  uint64_t _seed;
-
-  uint16_t _pc;
-  uint8_t *_memory;
-  uint8_t _a;
-  uint8_t _x;
-  uint8_t _y;
-  uint8_t _sp;
-  bool _cc_s;
-  bool _cc_v;
-  bool _cc_i;
-  bool _cc_d;
-  bool _cc_c;
-  bool _cc_z;
-  bool _exited_early;
-  uint16_t _addresses_read[8];
-  uint8_t _values_read[8];
-  uint8_t _n_read;
-  uint16_t _addresses_written[8];
-  uint8_t _values_written[8];
-  uint8_t _n_written;
 
   uint8_t immediate(uint16_t val, bool is_constant) {
     return val;
@@ -272,12 +269,25 @@ struct concrete_machine {
   uint8_t x(uint8_t val) { return _x = E(val, _x); }
   uint8_t y(uint8_t val) { return _y = E(val, _y); }
   uint8_t sp(uint8_t val) { return _sp = E(val, _sp); }
-  bool cc_s(bool val) { return _cc_s = E(val, _cc_s); }
-  bool cc_v(bool val) { return _cc_v = E(val, _cc_v); }
-  bool cc_i(bool val) { return _cc_i = E(val, _cc_i); }
-  bool cc_d(bool val) { return _cc_d = E(val, _cc_d); }
-  bool cc_c(bool val) { return _cc_c = E(val, _cc_c); }
-  bool cc_z(bool val) { return _cc_z = E(val, _cc_z); }
+  bool cc_s(bool val) { return (_p = E((_p & ~FLAG_S) | (val ? FLAG_S : 0), _p)); }
+  bool cc_v(bool val) { return (_p = E((_p & ~FLAG_V) | (val ? FLAG_V : 0), _p)); }
+  bool cc_i(bool val) { return (_p = E((_p & ~FLAG_I) | (val ? FLAG_I : 0), _p)); }
+  bool cc_d(bool val) { return (_p = E((_p & ~FLAG_D) | (val ? FLAG_D : 0), _p)); }
+  bool cc_c(bool val) { return (_p = E((_p & ~FLAG_C) | (val ? FLAG_C : 0), _p)); }
+  bool cc_z(bool val) { return (_p = E((_p & ~FLAG_Z) | (val ? FLAG_Z : 0), _p)); }
+
+  uint16_t pc() { return _pc; }
+  uint8_t a() { return _a; }
+  uint8_t x() { return _x; }
+  uint8_t y() { return _y; }
+  uint8_t sp() { return _sp; }
+  bool cc_s() { return _p & FLAG_S; }
+  bool cc_v() { return _p & FLAG_V; }
+  bool cc_i() { return _p & FLAG_I; }
+  bool cc_d() { return _p & FLAG_D; }
+  bool cc_c() { return _p & FLAG_C; }
+  bool cc_z() { return _p & FLAG_Z; }
+  bool exited_early() { return _exited_early; }
 
   uint8_t read(uint16_t address) {
     assert(_n_read < 8);
@@ -331,10 +341,33 @@ struct concrete_machine {
     _exited_early = false;
   }
 
+  uint16_t _addresses_read[8];
+  uint8_t _values_read[8];
+  uint8_t _n_read;
+  uint16_t _addresses_written[8];
+  uint8_t _values_written[8];
+  uint8_t _n_written;
+  bool _assumptions;
+
+  void assume(bool value) {
+    _assumptions = E(_assumptions && value,_assumptions);
+  }
+
   private:
   inline uint16_t E(uint16_t val, uint16_t orig) {
     return _exited_early ? orig : val;
   }
+
+  uint64_t _seed;
+
+  uint16_t _pc;
+  uint8_t *_memory;
+  uint8_t _a;
+  uint8_t _x;
+  uint8_t _y;
+  uint8_t _sp;
+  uint8_t _p;
+  bool _exited_early;
 };
 
 struct prover_context {
@@ -394,6 +427,7 @@ struct abstract_machine {
   ctx(c),
   _exited_early(c.boolean(false)),
   _memory(c.memory()),
+  _assumptions(c.boolean(true)),
   _a(c.u8("a")),
   _x(c.u8("x")),
   _y(c.u8("y")),
@@ -408,19 +442,19 @@ struct abstract_machine {
   }
 
   explicit abstract_machine(prover_context& c, concrete_machine &other): abstract_machine(c) {
-    _a = ctx.u8(other._a);
-    _x = ctx.u8(other._x);
-    _y = ctx.u8(other._y);
-    _sp = ctx.u8(other._sp);
-    _cc_s = ctx.boolean(other._cc_s);
-    _cc_v = ctx.boolean(other._cc_v);
-    _cc_i = ctx.boolean(other._cc_i);
-    _cc_d = ctx.boolean(other._cc_d);
-    _cc_c = ctx.boolean(other._cc_c);
-    _cc_z = ctx.boolean(other._cc_z);
+    _a = ctx.u8(other.a());
+    _x = ctx.u8(other.x());
+    _y = ctx.u8(other.y());
+    _sp = ctx.u8(other.sp());
+    _cc_s = ctx.boolean(other.cc_s());
+    _cc_v = ctx.boolean(other.cc_v());
+    _cc_i = ctx.boolean(other.cc_i());
+    _cc_d = ctx.boolean(other.cc_d());
+    _cc_c = ctx.boolean(other.cc_c());
+    _cc_z = ctx.boolean(other.cc_z());
 
-    _exited_early = ctx.boolean(other._exited_early);
-    _pc = ctx.u16(other._pc);
+    _exited_early = ctx.boolean(other.exited_early());
+    _pc = ctx.u16(other.pc());
   }
 
   z3::expr absolute(uint16_t payload, bool is_constant) {
@@ -496,6 +530,10 @@ struct abstract_machine {
 
   z3::expr read(uint16_t addr) {
     return read(ctx.u16(addr));
+  }
+
+  void assume(z3::expr value) {
+    _assumptions = E(_assumptions && value, _assumptions);
   }
 
   /**
@@ -592,6 +630,20 @@ struct abstract_machine {
   z3::expr pc(z3::expr const val) { return _pc = E(val, _pc); }
   z3::expr pc(uint16_t val) { return pc(ctx.u16(val)); }  
 
+  z3::expr a() { return _a; }
+  z3::expr x() { return _x; }
+  z3::expr y() { return _y; }
+  z3::expr sp() { return _sp; }
+  z3::expr cc_s() { return _cc_s; }
+  z3::expr cc_v() { return _cc_v; }
+  z3::expr cc_i() { return _cc_i; }
+  z3::expr cc_d() { return _cc_d; }
+  z3::expr cc_c() { return _cc_c; }
+  z3::expr cc_z() { return _cc_z; }
+  z3::expr pc() { return _pc; }
+  z3::expr exited_early() { return _exited_early; }
+  z3::expr memory() { return _memory; }
+
   void reset_early_exit() {
     _exited_early = ctx.boolean(false);
   }
@@ -614,10 +666,12 @@ struct abstract_machine {
     return *this;
   }
 
+  private:
   prover_context &ctx;
 
   z3::expr _exited_early;
   z3::expr _memory;
+  z3::expr _assumptions;
 
   // The internal state of the machine.
   z3::expr _a;
@@ -647,25 +701,29 @@ struct emulator {
   }
 
   typename machine::expr8 pull() {
-    m.sp(m._sp + 1);
-    return m.read(m.from_bytes(0x1, m._sp));
+    m.sp(m.sp() + 1);
+    // assume that the stack doesn't underflow
+    m.assume(m.sp() != 0);
+    return m.read(m.from_bytes(0x1, m.sp()));
   }
 
   typename machine::expr8 push(typename machine::expr8 val) {
-    auto addr = m.from_bytes(0x1, m._sp);
+    auto addr = m.from_bytes(0x1, m.sp());
     m.write(addr, val);
-    m.sp(m._sp - 1);
+    m.sp(m.sp() - 1);
+    // assume that the stack doesn't overflow
+    m.assume(m.sp() != 0xFF);
     return val;
   }
 
   typename machine::expr8 flags_to_byte() const {
-    return m.ite(m._cc_s, 0x80, 0x00)
-         | m.ite(m._cc_v, 0x40, 0x00)
+    return m.ite(m.cc_s(), 0x80, 0x00)
+         | m.ite(m.cc_v(), 0x40, 0x00)
          | 0x20
-         | m.ite(m._cc_d, 0x08, 0x00)
-         | m.ite(m._cc_i, 0x04, 0x00)
-         | m.ite(m._cc_z, 0x02, 0x00)
-         | m.ite(m._cc_c, 0x01, 0x00);
+         | m.ite(m.cc_d(), 0x08, 0x00)
+         | m.ite(m.cc_i(), 0x04, 0x00)
+         | m.ite(m.cc_z(), 0x02, 0x00)
+         | m.ite(m.cc_c(), 0x01, 0x00);
   }
 
   void byte_to_flags(typename machine::expr8 status) {
@@ -682,7 +740,7 @@ struct emulator {
       return;
     }
 
-    m.pc(m._pc + instruction_size(ins.payload_type));
+    m.pc(m.pc() + instruction_size(ins.payload_type));
 
     bool is_constant = static_cast<uint8_t>(ins.payload_type & instruction_payload_type::CONST_FLAG);
 
@@ -705,29 +763,29 @@ struct emulator {
       absolute_var = absolute_payload;
       break;
     case instruction_payload_type::ABSOLUTE_X:
-      absolute_var = absolute_payload + m.extend(m._x);
+      absolute_var = absolute_payload + m.extend(m.x());
       break;
     case instruction_payload_type::ABSOLUTE_Y:
-      absolute_var = absolute_payload + m.extend(m._y);
+      absolute_var = absolute_payload + m.extend(m.y());
       break;
     case instruction_payload_type::X_INDIRECT:
       // lda (addr, x)
-      absolute_var = m.from_bytes(m.read((zp_payload + m._x + 1) & 0xFF),
-                                m.read((zp_payload + m._x) & 0xFF));
+      absolute_var = m.from_bytes(m.read((zp_payload + m.x() + 1) & 0xFF),
+                                m.read((zp_payload + m.x()) & 0xFF));
       break;
     case instruction_payload_type::INDIRECT_Y:
       // lda (addr), y
       absolute_var = m.from_bytes(m.read((zp_payload + 1) & 0xFF),
-                                m.read(zp_payload)) + m.extend(m._y);
+                                m.read(zp_payload)) + m.extend(m.y());
       break;
     case instruction_payload_type::ZERO_PAGE:
       absolute_var = m.extend(zp_payload);
       break;
     case instruction_payload_type::ZERO_PAGE_X:
-      absolute_var = m.extend(zp_payload + m._x);
+      absolute_var = m.extend(zp_payload + m.x());
       break;
     case instruction_payload_type::ZERO_PAGE_Y:
-      absolute_var = m.extend(zp_payload + m._y);
+      absolute_var = m.extend(zp_payload + m.y());
       break;
     case instruction_payload_type::IMMEDIATE:
       immediate_var = immediate_payload;
@@ -741,8 +799,8 @@ struct emulator {
       }
     case instruction_payload_type::X_INDIRECT_ABSOLUTE:
       absolute_var = m.from_bytes(
-        m.read(absolute_payload + m.extend(m._x) + 1),
-        m.read(absolute_payload + m.extend(m._x)));
+        m.read(absolute_payload + m.extend(m.x()) + 1),
+        m.read(absolute_payload + m.extend(m.x())));
       break;
     case instruction_payload_type::ZERO_PAGE_INDIRECT:
       absolute_var = m.from_bytes(m.read((zp_payload + 1) & 0xFF),
@@ -752,7 +810,8 @@ struct emulator {
       assert(false);
     }
 
-    // If we aren't using the immediate operand, then read the address we found.
+    // If we aren't using the immediate operand, then read the address
+    // and store it there.
     if (ins.payload_type != instruction_payload_type::IMMEDIATE && ins.payload_type != instruction_payload_type::IMMEDIATE_CONST) {
       immediate_var = m.read(absolute_var);
     }
@@ -764,13 +823,13 @@ struct emulator {
       // nothing to do
       break;
     case instruction_name::AND:
-      m.a(set_sz(m._a & immediate_var));
+      m.a(set_sz(m.a() & immediate_var));
       break;
     case instruction_name::ORA:
-      m.a(set_sz(m._a | immediate_var));
+      m.a(set_sz(m.a() | immediate_var));
       break;
     case instruction_name::EOR: 
-      m.a(set_sz(m._a ^ immediate_var));
+      m.a(set_sz(m.a() ^ immediate_var));
       break;
     case instruction_name::LDA:
       m.a(set_sz(immediate_var));
@@ -782,28 +841,28 @@ struct emulator {
       m.y(set_sz(immediate_var));
       break;
     case instruction_name::TXA:
-      m.a(set_sz(m._x));
+      m.a(set_sz(m.x()));
       break;
     case instruction_name::TAX:
-      m.x(set_sz(m._a));
+      m.x(set_sz(m.a()));
       break;
     case instruction_name::TYA:
-      m.a(set_sz(m._y));
+      m.a(set_sz(m.y()));
       break;
     case instruction_name::TAY:
-      m.y(set_sz(m._a));
+      m.y(set_sz(m.a()));
       break;
     case instruction_name::INX:
-      m.x(set_sz(m._x + 1));
+      m.x(set_sz(m.x() + 1));
       break;
     case instruction_name::INY:
-      m.y(set_sz(m._y + 1));
+      m.y(set_sz(m.y() + 1));
       break;
     case instruction_name::DEX:
-      m.x(set_sz(m._x - 1));
+      m.x(set_sz(m.x() - 1));
       break;
     case instruction_name::DEY:
-      m.y(set_sz(m._y - 1));
+      m.y(set_sz(m.y() - 1));
       break;
     case instruction_name::CLC:
       m.cc_c(false);
@@ -827,98 +886,101 @@ struct emulator {
       m.cc_d(true);
       break;
     case instruction_name::TSX:
-      m.x(set_sz(m._sp));
+      m.x(set_sz(m.sp()));
       break;
     case instruction_name::TXS:
-      m.sp(m._x);
+      m.sp(m.x());
       break;
     case instruction_name::NOP:
       // nap.
       break;
     case instruction_name::INC:
-      m.write(absolute_var, set_sz(immediate_var + 1));
-      break;
-    case instruction_name::INCA:
-      m.a(set_sz(m._a + 1));
+      if (ins.payload_type == instruction_payload_type::NONE) {
+        m.a(set_sz(m.a() + 1));
+      } else {
+        m.write(absolute_var, set_sz(immediate_var + 1));
+      }
       break;
     case instruction_name::DEC:
-      m.write(absolute_var, set_sz(immediate_var - 1));
+      if (ins.payload_type == instruction_payload_type::NONE) {
+        m.a(set_sz(m.a() - 1));
+      } else {
+        m.write(absolute_var, set_sz(immediate_var - 1));
+      }
       break;
-    case instruction_name::DECA:
-      m.a(set_sz(m._a - 1));
     case instruction_name::BIT:
-      m.cc_z((immediate_var & m._a) == 0);
+      m.cc_z((immediate_var & m.a()) == 0);
       m.cc_s((immediate_var & 0x80) == 0x80);
       m.cc_v((immediate_var & 0x40) == 0x40);
       break;
-    case instruction_name::ASLA:
-      m.cc_c((m._a & 0x80) == 0x80);
-      m.a(set_sz(m.shl(m._a)));
-      break;
     case instruction_name::ASL:
-      m.cc_c((immediate_var & 0x80) == 0x80);
-      m.write(absolute_var, set_sz(m.shl(immediate_var)));
-      break;
-    case instruction_name::ROLA: {
-      auto val = m.shl(m._a) | m.ite(m._cc_c, 1, 0);
-      m.cc_c((m._a & 0x80) == 0x80);
-      m.a(set_sz(val));
-      break;
+      if (ins.payload_type == instruction_payload_type::NONE) {
+        m.cc_c((m.a() & 0x80) == 0x80);
+        m.a(set_sz(m.shl(m.a())));
+      } else {
+        m.cc_c((immediate_var & 0x80) == 0x80);
+        m.write(absolute_var, set_sz(m.shl(immediate_var)));
       }
-    case instruction_name::ROL: {
-      auto val = m.shl(immediate_var) | m.ite(m._cc_c, 1, 0);
-      m.cc_c((immediate_var & 0x80) == 0x80);
-      m.write(absolute_var, set_sz(val));
       break;
+    case instruction_name::ROL:
+      if (ins.payload_type == instruction_payload_type::NONE) {
+        auto val = m.shl(m.a()) | m.ite(m.cc_c(), 1, 0);
+        m.cc_c((m.a() & 0x80) == 0x80);
+        m.a(set_sz(val));
+      } else {
+        auto val = m.shl(immediate_var) | m.ite(m.cc_c(), 1, 0);
+        m.cc_c((immediate_var & 0x80) == 0x80);
+        m.write(absolute_var, set_sz(val));
       }
-    case instruction_name::LSRA:
-      m.cc_c((m._a & 0x01) == 0x01);
-      m.a(set_sz(m.shr(m._a)));
       break;
     case instruction_name::LSR:
-      m.cc_c((immediate_var & 0x01) == 0x01);
-      m.write(absolute_var, set_sz(m.shr(immediate_var)));
-      break;
-    case instruction_name::RORA: {
-      auto val = m.shr(m._a) | m.ite(m._cc_c, 0x80, 0x00);
-      m.cc_c((m._a & 0x01) == 0x01);
-      m.a(set_sz(val));
-      break;
+      if (ins.payload_type == instruction_payload_type::NONE) {
+        m.cc_c((m.a() & 0x01) == 0x01);
+        m.a(set_sz(m.shr(m.a())));
+      } else {
+        m.cc_c((immediate_var & 0x01) == 0x01);
+        m.write(absolute_var, set_sz(m.shr(immediate_var)));
       }
-    case instruction_name::ROR: {
-      auto val = m.shr(immediate_var) | m.ite(m._cc_c, 0x80, 0x00);
-      m.cc_c((immediate_var & 0x01) == 0x01);
-      m.write(absolute_var, set_sz(val));
       break;
+    case instruction_name::ROR:
+      if (ins.payload_type == instruction_payload_type::NONE) {
+        auto val = m.shr(m.a()) | m.ite(m.cc_c(), 0x80, 0x00);
+        m.cc_c((m.a() & 0x01) == 0x01);
+        m.a(set_sz(val));
+      } else {
+        auto val = m.shr(immediate_var) | m.ite(m.cc_c(), 0x80, 0x00);
+        m.cc_c((immediate_var & 0x01) == 0x01);
+        m.write(absolute_var, set_sz(val));
       }
+      break;
     case instruction_name::STZ:
       m.write(absolute_var, 0);
     case instruction_name::STA:
-      m.write(absolute_var, m._a);
+      m.write(absolute_var, m.a());
       break;
     case instruction_name::STX:
-      m.write(absolute_var, m._x);
+      m.write(absolute_var, m.x());
       break;
     case instruction_name::STY:
-      m.write(absolute_var, m._y);
+      m.write(absolute_var, m.y());
       break;
     case instruction_name::PLA:
       m.a(set_sz(pull()));
       break;
     case instruction_name::PHA:
-      push(m._a);
+      push(m.a());
       break;
     case instruction_name::PLX:
       m.x(set_sz(pull()));
       break;
     case instruction_name::PHX:
-      push(m._x);
+      push(m.x());
       break;
     case instruction_name::PLY:
       m.y(set_sz(pull()));
       break;
     case instruction_name::PHY:
-      push(m._y);
+      push(m.y());
       break;
     case instruction_name::PHP: {
       push(flags_to_byte() | 0x10);
@@ -932,26 +994,32 @@ struct emulator {
       immediate_var = immediate_var ^ 0xFF;
       /* fallthrough */
     case instruction_name::ADC: {
-      auto sum = m.extend(immediate_var) + m.extend(m._a) + m.extend(m.ite(m._cc_c, 0x01, 0x00));
-      m.cc_v(0x80 == (0x80 & (m.lobyte(sum) ^ m._a) & (m.lobyte(sum) ^ immediate_var)));
-      m.cc_c(m.hibyte(sum) == 0x01);
-      m.a(set_sz(m.lobyte(sum)));
+      auto carry = m.ite(m.cc_c(), 0x01, 0x00);
+      auto sum = m.extend(immediate_var) + m.extend(m.a()) + m.extend(carry);
+
+      if (DECIMAL_ENABLED) {
+        // TODO
+      } else {
+        m.cc_v(0x80 == (0x80 & (m.lobyte(sum) ^ m.a()) & (m.lobyte(sum) ^ immediate_var)));
+        m.cc_c(m.hibyte(sum) == 0x01);
+        m.a(set_sz(m.lobyte(sum)));
+      }
       break;
       }
     case instruction_name::CMP:
-      m.cc_c(m.uge(m._a, immediate_var));
-      m.cc_s(m.uge(m._a - immediate_var, 0x80));
-      m.cc_z(m._a == immediate_var);
+      m.cc_c(m.uge(m.a(), immediate_var));
+      m.cc_s(m.uge(m.a() - immediate_var, 0x80));
+      m.cc_z(m.a() == immediate_var);
       break;
     case instruction_name::CPX:
-      m.cc_c(m.uge(m._x, immediate_var));
-      m.cc_s(m.uge(m._x - immediate_var, 0x80));
-      m.cc_z(m._x == immediate_var);
+      m.cc_c(m.uge(m.x(), immediate_var));
+      m.cc_s(m.uge(m.x() - immediate_var, 0x80));
+      m.cc_z(m.x() == immediate_var);
       break;
     case instruction_name::CPY:
-      m.cc_c(m.uge(m._y, immediate_var));
-      m.cc_s(m.uge(m._y - immediate_var, 0x80));
-      m.cc_z(m._y == immediate_var);
+      m.cc_c(m.uge(m.y(), immediate_var));
+      m.cc_s(m.uge(m.y() - immediate_var, 0x80));
+      m.cc_z(m.y() == immediate_var);
       break;
     case instruction_name::JMP:
       m.exit(absolute_var);
@@ -970,61 +1038,61 @@ struct emulator {
       break;
       }
     case instruction_name::BPL:
-      m.exit_if(!m._cc_s, absolute_var);
+      m.exit_if(!m.cc_s(), absolute_var);
       break;
     case instruction_name::BMI:
-      m.exit_if(m._cc_s, absolute_var);
+      m.exit_if(m.cc_s(), absolute_var);
       break;
     case instruction_name::BVS:
-      m.exit_if(m._cc_v, absolute_var);
+      m.exit_if(m.cc_v(), absolute_var);
       break;
     case instruction_name::BVC:
-      m.exit_if(!m._cc_v, absolute_var);
+      m.exit_if(!m.cc_v(), absolute_var);
       break;
     case instruction_name::BCC:
-      m.exit_if(!m._cc_c, absolute_var);
+      m.exit_if(!m.cc_c(), absolute_var);
       break;
     case instruction_name::BCS:
-      m.exit_if(m._cc_c, absolute_var);
+      m.exit_if(m.cc_c(), absolute_var);
       break;
     case instruction_name::BEQ:
-      m.exit_if(m._cc_z, absolute_var);
+      m.exit_if(m.cc_z(), absolute_var);
       break;
     case instruction_name::BNE:
-      m.exit_if(!m._cc_z, absolute_var);
+      m.exit_if(!m.cc_z(), absolute_var);
       break;
     case instruction_name::JSR:
-      push(m.hibyte(m._pc - 1));
-      push(m.lobyte(m._pc - 1));
+      push(m.hibyte(m.pc() - 1));
+      push(m.lobyte(m.pc() - 1));
       m.exit(absolute_var);
       break;
     case instruction_name::BRK:
-      push(m.hibyte(m._pc + 1));
-      push(m.lobyte(m._pc + 1));
+      push(m.hibyte(m.pc() + 1));
+      push(m.lobyte(m.pc() + 1));
       push(flags_to_byte() | 0x10);
       m.cc_i(true);
       m.exit(m.from_bytes(m.read(0xFFFF), m.read(0xFFFE)));
       break;
     case instruction_name::LAX:
       m.a(set_sz(immediate_var));
-      m.x(m._a);
+      m.x(m.a());
       break;
     case instruction_name::SAX:
-      m.write(absolute_var, m._a & m._x);
+      m.write(absolute_var, m.a() & m.x());
       break;
     case instruction_name::DCM:
       immediate_var = immediate_var - 1;
       m.write(absolute_var, set_sz(immediate_var));
-      m.cc_c(m.uge(m._a, immediate_var));
-      m.cc_s(m.uge(m._a - immediate_var, 0x80));
-      m.cc_z(m._a == immediate_var);
+      m.cc_c(m.uge(m.a(), immediate_var));
+      m.cc_s(m.uge(m.a() - immediate_var, 0x80));
+      m.cc_z(m.a() == immediate_var);
       break;
     case instruction_name::INS: {
       immediate_var = immediate_var + 1;
       m.write(absolute_var, set_sz(immediate_var));
       immediate_var = immediate_var ^ 0xFF;
-      auto sum = m.extend(immediate_var) + m.extend(m._a) + m.extend(m.ite(m._cc_c, 0x01, 0x00));
-      m.cc_v(0x80 == (0x80 & (m.lobyte(sum) ^ m._a) & (m.lobyte(sum) ^ immediate_var)));
+      auto sum = m.extend(immediate_var) + m.extend(m.a()) + m.extend(m.ite(m.cc_c(), 0x01, 0x00));
+      m.cc_v(0x80 == (0x80 & (m.lobyte(sum) ^ m.a()) & (m.lobyte(sum) ^ immediate_var)));
       m.cc_c(m.hibyte(sum) == 0x01);
       m.a(set_sz(m.lobyte(sum)));
       break;
@@ -1033,45 +1101,44 @@ struct emulator {
       m.cc_c((immediate_var & 0x80) == 0x80);
       immediate_var = m.shl(immediate_var);
       m.write(absolute_var, set_sz(immediate_var));
-      m.a(set_sz(m._a | immediate_var));
+      m.a(set_sz(m.a() | immediate_var));
       break;
     case instruction_name::RLA: {
-      auto val = m.shl(immediate_var) | m.ite(m._cc_c, 1, 0);
-      // printf("vals: %02X %02X %04X\n", immediate_var, val, absolute_var);
+      auto val = m.shl(immediate_var) | m.ite(m.cc_c(), 1, 0);
       m.cc_c((immediate_var & 0x80) == 0x80);
       m.write(absolute_var, set_sz(val));
-      m.a(set_sz(val & m._a));
+      m.a(set_sz(val & m.a()));
       break;
       }
     case instruction_name::SRE:
       m.cc_c((immediate_var & 0x01) == 0x01);
       immediate_var = m.shr(immediate_var);
       m.write(absolute_var, set_sz(immediate_var));
-      m.a(set_sz(m._a ^ immediate_var));
+      m.a(set_sz(m.a() ^ immediate_var));
       break;
     case instruction_name::RRA: {
-      auto val = m.shr(immediate_var) | m.ite(m._cc_c, 0x80, 0x00);
+      auto val = m.shr(immediate_var) | m.ite(m.cc_c(), 0x80, 0x00);
       m.cc_c((immediate_var & 0x01) == 0x01);
       m.write(absolute_var, set_sz(val));
-      auto sum = m.extend(val) + m.extend(m._a) + m.extend(m.ite(m._cc_c, 0x01, 0x00));
-      m.cc_v(0x80 == (0x80 & (m.lobyte(sum) ^ m._a) & (m.lobyte(sum) ^ val)));
+      auto sum = m.extend(val) + m.extend(m.a()) + m.extend(m.ite(m.cc_c(), 0x01, 0x00));
+      m.cc_v(0x80 == (0x80 & (m.lobyte(sum) ^ m.a()) & (m.lobyte(sum) ^ val)));
       m.cc_c(m.hibyte(sum) == 0x01);
       m.a(set_sz(m.lobyte(sum)));
       break;
       }
     case instruction_name::ALR: {
-      auto val = m.shr(m._a & immediate_var);
-      m.cc_c((m._a & immediate_var & 0x01) == 0x01);
+      auto val = m.shr(m.a() & immediate_var);
+      m.cc_c((m.a() & immediate_var & 0x01) == 0x01);
       m.a(set_sz(val));
       break;
       }
     case instruction_name::ANC:
-      m.a(set_sz(m._a & immediate_var));
-      m.cc_c(m._cc_s);
+      m.a(set_sz(m.a() & immediate_var));
+      m.cc_c(m.cc_s());
       break;
     case instruction_name::ARR: {
-      m.a(set_sz(m._a & immediate_var));
-      auto val = m.shr(m._a) | m.ite(m._cc_c, 0x80, 0x00);
+      m.a(set_sz(m.a() & immediate_var));
+      auto val = m.shr(m.a()) | m.ite(m.cc_c(), 0x80, 0x00);
       m.cc_c((val & 0x40) == 0x40);
       auto bit6 = (val & 0x40) == 0x40;
       auto bit5 = (val & 0x20) == 0x20;
@@ -1080,7 +1147,7 @@ struct emulator {
       break;
       }
     case instruction_name::AXS: {
-      auto xa = m._x & m._a;
+      auto xa = m.x() & m.a();
       m.x(set_sz(xa - immediate_var));
       m.cc_c(m.uge(xa, immediate_var));
       break;
@@ -1120,7 +1187,7 @@ instruction decode(const uint8_t memory[256*256], const uint16_t pc) {
     case 0x06: DR(ASL, ZERO_PAGE_CONST, BYTE);
     case 0x08: DR(PHP, NONE, 0);
     case 0x09: DR(ORA, IMMEDIATE_CONST, BYTE);
-    case 0x0A: DR(ASLA, NONE, 0);
+    case 0x0A: DR(ASL, NONE, 0);
     case 0x0D: DR(ORA, ABSOLUTE_CONST, ABS);
     case 0x0E: DR(ASL, ABSOLUTE_CONST, ABS);
     case 0x10: DR(BPL, RELATIVE_CONST, REL);
@@ -1138,7 +1205,7 @@ instruction decode(const uint8_t memory[256*256], const uint16_t pc) {
     case 0x26: DR(ROL, ZERO_PAGE_CONST, BYTE);
     case 0x28: DR(PLP, NONE, 0);
     case 0x29: DR(AND, IMMEDIATE_CONST, BYTE);
-    case 0x2A: DR(ROLA, NONE, 0);
+    case 0x2A: DR(ROL, NONE, 0);
     case 0x2C: DR(BIT, ABSOLUTE_CONST, ABS);
     case 0x2D: DR(AND, ABSOLUTE_CONST, ABS);
     case 0x2E: DR(ROL, ABSOLUTE_CONST, ABS);
@@ -1156,7 +1223,7 @@ instruction decode(const uint8_t memory[256*256], const uint16_t pc) {
     case 0x46: DR(LSR, ZERO_PAGE_CONST, BYTE);
     case 0x48: DR(PHA, NONE, 0);
     case 0x49: DR(EOR, IMMEDIATE_CONST, BYTE);
-    case 0x4A: DR(LSRA, NONE, 0);
+    case 0x4A: DR(LSR, NONE, 0);
     case 0x4C: DR(JMP, ABSOLUTE_CONST, ABS);
     case 0x4D: DR(EOR, ABSOLUTE_CONST, ABS);
     case 0x4E: DR(LSR, ABSOLUTE_CONST, ABS);
@@ -1174,7 +1241,7 @@ instruction decode(const uint8_t memory[256*256], const uint16_t pc) {
     case 0x66: DR(ROR, ZERO_PAGE_CONST, BYTE);
     case 0x68: DR(PLA, NONE, 0);
     case 0x69: DR(ADC, IMMEDIATE_CONST, BYTE);
-    case 0x6A: DR(RORA, NONE, 0);
+    case 0x6A: DR(ROR, NONE, 0);
     case 0x6C: DR(JMP, INDIRECT_ABSOLUTE_CONST, ABS);
     case 0x6D: DR(ADC, ABSOLUTE_CONST, ABS);
     case 0x6E: DR(ROR, ABSOLUTE_CONST, ABS);
@@ -1388,132 +1455,147 @@ instruction decode(const uint8_t memory[256*256], const uint16_t pc) {
 #undef REL
 #undef DR
 
-int main(int argc, char **argv) {
-    std::cout << "Sizes: a:" << (sizeof(abstract_machine)) << std::endl << "c: " << (sizeof(concrete_machine)) << std::endl;
+int compareAbstractAndConcrete(char *rom) {
+  std::cout << "Sizes: a:" << (sizeof(abstract_machine)) << std::endl << "c: " << (sizeof(concrete_machine)) << std::endl;
 
-    try {
-      char header[0x10];
-      char *prg;
-      char *chr;
-      uint8_t memory[0x10000];
+  try {
+    char header[0x10];
+    char *prg;
+    char *chr;
+    uint8_t memory[0x10000];
 
-      prover_context prover_ctx;
-      z3::context &ctx = prover_ctx.context;
-      concrete_machine c_machine(0, memory);
-      emulator<concrete_machine> c_emulator(c_machine);
+    prover_context prover_ctx;
+    z3::context &ctx = prover_ctx.context;
+    concrete_machine c_machine(0, memory);
+    emulator<concrete_machine> c_emulator(c_machine);
 
-      std::ifstream input(argv[1], std::ios::in | std::ios::binary);
-      printf("Loading file %s\n", argv[1]);
-      input.read(header, sizeof header);
-      int prg_size = 0x4000 * header[4];
-      prg = new char[prg_size];
-      int chr_size = 0x4000 * header[5];
+    std::ifstream input(rom, std::ios::in | std::ios::binary);
+    printf("Loading file %s\n", rom);
+    input.read(header, sizeof header);
+    int prg_size = 0x4000 * header[4];
+    prg = new char[prg_size];
+    int chr_size = 0x4000 * header[5];
 
-      printf("iNES info: %02X %02X %02X %02X PRG:%02X CHR:%02X\n", header[0], header[1], header[2], header[3], header[4], header[5]);
-      chr = new char[chr_size];
-      input.read(prg, prg_size);
-      input.read(chr, chr_size);
+    printf("iNES info: %02X %02X %02X %02X PRG:%02X CHR:%02X\n", header[0], header[1], header[2], header[3], header[4], header[5]);
+    chr = new char[chr_size];
+    input.read(prg, prg_size);
+    input.read(chr, chr_size);
 
-      for (uint16_t i = 0; i < prg_size && i < 0x8000; i++) {
-        memory[0x8000 + i] = prg[i];
-        if (prg_size == 0x4000) {
-          memory[0xC000 + i] = prg[i];
-        }
+    for (uint16_t i = 0; i < prg_size && i < 0x8000; i++) {
+      memory[0x8000 + i] = prg[i];
+      if (prg_size == 0x4000) {
+        memory[0xC000 + i] = prg[i];
       }
-
-      c_machine.pc(c_machine.from_bytes(memory[0xFFFD], memory[0xFFFC]));
-      printf("pc:%04X\n", c_machine._pc);
-
-      std::string status;
-
-      uint64_t instructions = 0;
-      while (instructions < 0x10000 || memory[0x6000] == 0x80) {
-        instruction ins = decode(memory, c_machine._pc);
-
-        instructions++;
-        
-        
-        printf("%04X  ", c_machine._pc);
-
-        int i = 0, size = instruction_size(ins.payload_type);
-        for (; i < size; i++) {
-          printf("%02X ", memory[c_machine._pc + i]);
-        }
-        for (; i < 3; i++) {
-          printf("   ");
-        }
-
-        printf(" A:%02X X:%02X Y:%02X P:%02X SP:%02X\n",
-          c_machine._a,
-          c_machine._x,
-          c_machine._y,
-          c_emulator.flags_to_byte(),
-          c_machine._sp);
-
-        if (memory[0x6004] != 0) {
-          std::string new_status((char *)(memory + 0x6004));
-          if (new_status != status) {
-            status = new_status;
-            std::cout << new_status;
-          }
-        }
-
-        {
-          c_machine.reset_early_exit();
-          c_machine._n_read = 0;
-          c_machine._n_written = 0;
-          // Create an abstract machine copying the current state
-          abstract_machine a_machine(prover_ctx, c_machine);
-          // Save the original memory state
-          auto original_memory = a_machine._memory;
-          emulator<abstract_machine> a_emulator(a_machine);
-          // Run the instruction on both machines
-          c_emulator.run(ins);
-          a_emulator.run(ins);
-          //a_machine.simplify();
-          z3::solver solver(ctx);
-          // Add assertions for the memory locations which were read.
-          for (int i = 0; i < c_machine._n_read; i++) {
-            auto equal = z3::select(original_memory, c_machine._addresses_read[i]) == c_machine._values_read[i];
-            solver.add(equal);
-          }
-
-          // And for the memory locations which were written.
-          for (int i = 0; i < c_machine._n_written; i++) {
-            auto equal = z3::select(a_machine._memory, c_machine._addresses_written[i]) == c_machine._values_written[i];
-            solver.add(equal);
-          }
-
-          solver.add(a_machine._a == c_machine._a);
-          solver.add(a_machine._x == c_machine._x);
-          solver.add(a_machine._y == c_machine._y);
-          solver.add(a_machine._sp == c_machine._sp);
-          if (c_machine._cc_s) { solver.add(a_machine._cc_s); } else { solver.add(!a_machine._cc_s); }
-          if (c_machine._cc_v) { solver.add(a_machine._cc_v); } else { solver.add(!a_machine._cc_v); }
-          if (c_machine._cc_i) { solver.add(a_machine._cc_i); } else { solver.add(!a_machine._cc_i); }
-          if (c_machine._cc_d) { solver.add(a_machine._cc_d); } else { solver.add(!a_machine._cc_d); }
-          if (c_machine._cc_c) { solver.add(a_machine._cc_c); } else { solver.add(!a_machine._cc_c); }
-          if (c_machine._cc_z) { solver.add(a_machine._cc_z); } else { solver.add(!a_machine._cc_z); }
-          solver.add(a_machine._pc == c_machine._pc);
-          if (c_machine._exited_early) { solver.add(a_machine._exited_early); } else { solver.add(!a_machine._exited_early); }
-
-          auto result = solver.check();
-          if (result == z3::unsat) {
-            std::cout << solver << std::endl;
-            return 1;
-          }
-        }
-      }
-
-      exit(memory[0x6000]);
-
-    } catch(z3::exception e) {
-      std::cout << e << std::endl;
     }
 
-    return 0;
+    c_machine.pc(c_machine.from_bytes(memory[0xFFFD], memory[0xFFFC]));
+    printf("pc:%04X\n", c_machine.pc());
+
+    std::string status;
+
+    uint64_t instructions = 0;
+    while (instructions < 0x10000 || memory[0x6000] == 0x80) {
+      instruction ins = decode(memory, c_machine.pc());
+
+      instructions++;
+      
+      
+      printf("%04X  ", c_machine.pc());
+
+      int i = 0, size = instruction_size(ins.payload_type);
+      for (; i < size; i++) {
+        printf("%02X ", memory[c_machine.pc() + i]);
+      }
+      for (; i < 3; i++) {
+        printf("   ");
+      }
+
+      printf(" A:%02X X:%02X Y:%02X P:%02X SP:%02X\n",
+        c_machine.a(),
+        c_machine.x(),
+        c_machine.y(),
+        c_emulator.flags_to_byte(),
+        c_machine.sp());
+
+      if (memory[0x6004] != 0) {
+        std::string new_status((char *)(memory + 0x6004));
+        if (new_status != status) {
+          status = new_status;
+          std::cout << new_status;
+        }
+      }
+
+      {
+        c_machine.reset_early_exit();
+        c_machine._n_read = 0;
+        c_machine._n_written = 0;
+        // Create an abstract machine copying the current state
+        abstract_machine a_machine(prover_ctx, c_machine);
+        // Save the original memory state
+        auto original_memory = a_machine.memory();
+        emulator<abstract_machine> a_emulator(a_machine);
+        // Run the instruction on both machines
+        c_emulator.run(ins);
+        a_emulator.run(ins);
+        //a_machine.simplify();
+        z3::solver solver(ctx);
+        // Add assertions for the memory locations which were read.
+        for (int i = 0; i < c_machine._n_read; i++) {
+          auto equal = z3::select(original_memory, c_machine._addresses_read[i]) == c_machine._values_read[i];
+          solver.add(equal);
+        }
+
+        // And for the memory locations which were written.
+        for (int i = 0; i < c_machine._n_written; i++) {
+          solver.add(a_machine.read(c_machine._addresses_written[i]) == c_machine._values_written[i]);
+        }
+
+        solver.add(a_machine.a() == c_machine.a());
+        solver.add(a_machine.x() == c_machine.x());
+        solver.add(a_machine.y() == c_machine.y());
+        solver.add(a_machine.sp() == c_machine.sp());
+        if (c_machine.cc_s()) { solver.add(a_machine.cc_s()); } else { solver.add(!a_machine.cc_s()); }
+        if (c_machine.cc_v()) { solver.add(a_machine.cc_v()); } else { solver.add(!a_machine.cc_v()); }
+        if (c_machine.cc_i()) { solver.add(a_machine.cc_i()); } else { solver.add(!a_machine.cc_i()); }
+        if (c_machine.cc_d()) { solver.add(a_machine.cc_d()); } else { solver.add(!a_machine.cc_d()); }
+        if (c_machine.cc_c()) { solver.add(a_machine.cc_c()); } else { solver.add(!a_machine.cc_c()); }
+        if (c_machine.cc_z()) { solver.add(a_machine.cc_z()); } else { solver.add(!a_machine.cc_z()); }
+        solver.add(a_machine.pc() == c_machine.pc());
+        if (c_machine.exited_early()) { solver.add(a_machine.exited_early()); } else { solver.add(!a_machine.exited_early()); }
+
+        auto result = solver.check();
+        if (result == z3::unsat) {
+          std::cout << solver << std::endl;
+          return 1;
+        }
+      }
+    }
+
+    exit(memory[0x6000]);
+
+  } catch(z3::exception e) {
+    std::cout << e << std::endl;
+  }
+
+  return 0;
 }
 
-int runTests() {
+int initialize() {
+
   return 0;
+}
+
+int enumerate() {
+
+  return 0;
+}
+
+int main(int argc, char **argv) {
+  if (argv[1] == std::string("test")) {
+    return compareAbstractAndConcrete(argv[2]);
+  } else if (argv[1] == std::string("init")) {
+    return initialize();
+  } else if (argv[1] == std::string("enumerate")) {
+    return enumerate();
+  }
 }

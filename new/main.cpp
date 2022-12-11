@@ -99,8 +99,6 @@ enum struct instruction_name: uint8_t {
   PHY = 59,
   PLX = 60,
   PLY = 61,
-  RMB = 62,
-  SMB = 63,
   STP = 64,
   STZ = 65,
   TRB = 66,
@@ -363,7 +361,7 @@ struct concrete_machine {
       _n_read++;
     }
     if (ASSUME_VALID_STACK_USAGE) {
-      assume((address & 0xFF00 != 0x0100) || (address & 0xFF) > _sp);
+      assume((address & 0xFF00) != 0x0100 || (address & 0xFF) > _sp);
     }
     return _memory[address];
   }
@@ -376,7 +374,7 @@ struct concrete_machine {
       _n_written++;
     }
     if (ASSUME_VALID_STACK_USAGE) {
-      assume((address & 0xFF00 != 0x0100) || (address & 0xFF) > _sp);
+      assume((address & 0xFF00) != 0x0100 || (address & 0xFF) > _sp);
     }
     _memory[address] = E(val, _memory[address]);
   }
@@ -1315,6 +1313,45 @@ struct emulator {
       m.write(absolute_var, immediate_var | (1 << bit));
       break;
       }
+    case instruction_name::BBR0:
+    case instruction_name::BBR1:
+    case instruction_name::BBR2:
+    case instruction_name::BBR3:
+    case instruction_name::BBR4:
+    case instruction_name::BBR5:
+    case instruction_name::BBR6:
+    case instruction_name::BBR7: {
+      uint8_t bit = (uint8_t)ins.name - (uint8_t)instruction_name::BBR0;
+      m.exit_if((immediate_var & (1 << bit)) == 0, absolute_var);
+      break;
+      }
+    case instruction_name::BBS0:
+    case instruction_name::BBS1:
+    case instruction_name::BBS2:
+    case instruction_name::BBS3:
+    case instruction_name::BBS4:
+    case instruction_name::BBS5:
+    case instruction_name::BBS6:
+    case instruction_name::BBS7: {
+      uint8_t bit = (uint8_t)ins.name - (uint8_t)instruction_name::BBS0;
+      m.exit_if((immediate_var & (1 << bit)) != 0, absolute_var);
+      break;
+      }
+    case instruction_name::TRB: {
+      m.cc_z((immediate_var & m.a()) == 0);
+      m.write(absolute_var, immediate_var & ~m.a());
+      break;
+      }
+    case instruction_name::TSB: {
+      m.cc_z((immediate_var & m.a()) == 0);
+      m.write(absolute_var, immediate_var | m.a());
+      break;
+      }
+    case instruction_name::STP:
+    case instruction_name::WAI:
+      // TODO: What to do here? These shouldn't be included
+      // in optimization anyway.
+      break;
     }
   }
 };
@@ -1731,7 +1768,7 @@ int compare_abstract_and_concrete(char *rom) {
 
     exit(memory[0x6000]);
 
-  } catch(z3::exception e) {
+  } catch(z3::exception& e) {
     std::cout << e << std::endl;
   }
 
@@ -1808,7 +1845,7 @@ int nes_test(char *rom) {
       c_emulator.run(ins);
     }
 
-  } catch(z3::exception e) {
+  } catch(z3::exception& e) {
     std::cout << e << std::endl;
   }
   return 0;

@@ -104,6 +104,10 @@ struct zu {
     z3::expr val; 
 };
 
+typedef zb zbool;
+typedef zu<8> zuint8_t;
+typedef zu<16> zuint16_t;
+
 struct zmemory {
     zmemory(z3::expr expr): memory(expr) {
     }
@@ -181,8 +185,6 @@ struct cu {
 int sample() {
     z3::context c;
     auto v = c.bv_val(14, 8);
-
-    cu<uint8_t> abc = cu<uint8_t>::ite(1, 5, 6);
 
     zu<8> a(v);
     zu<16> b = (zu<16>)a;

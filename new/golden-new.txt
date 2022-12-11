@@ -1,3 +1,6 @@
+Loading file nestest.nes
+iNES info: 4E 45 53 1A PRG:01 CHR:01
+pc:C000
 C000  4C F5 C5  A:00 X:00 Y:00 P:24 SP:FD
 C5F5  A2 00     A:00 X:00 Y:00 P:24 SP:FD
 C5F7  86 00     A:00 X:00 Y:00 P:26 SP:FD

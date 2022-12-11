@@ -5,11 +5,25 @@
 #include "z3++.h"
 #include "operations.h"
 
+
+// Configs
+
+// Adds assertions that stack operations never cause
+// the stack pointer to overflow or underflow
+#define ASSUME_NO_STACK_OVERFLOW true
+// Adds assertions that all memory operations in page 1
+// are inside of the active stack area.
+#define ASSUME_VALID_STACK_USAGE true
+// Allows use of temporary memory locations.
+// The result of writing to these locations is ignored.
+#define IGNORE_TMP_MEMORY false
+
 #define PROCESSOR_NMOS_6502
 
+// Results
 #ifdef PROCESSOR_NMOS_6502
 
-#define DECIMAL_ENABLED        false
+#define DECIMAL_ENABLED        true
 #define HAS_JUMP_INDIRECT_BUG  true
 
 #elif defined(PROCESSOR_65c02)
@@ -93,21 +107,61 @@ enum struct instruction_name: uint8_t {
   TSB = 67,
   WAI = 68,
 
-  // NMOS 6502 undocumented instructions
-  LAX = 69,
-  SAX = 70,
-  DCM = 71,
-  INS = 72,
-  SLO = 73,
-  RLA = 74,
-  SRE = 75,
-  RRA = 76,
-  ALR = 77,
-  ANC = 78,
-  AXS = 79,
-  ARR = 80,
+  // Reset memory bit
+  RMB0 = 69,
+  RMB1 = 70,
+  RMB2 = 71,
+  RMB3 = 72,
+  RMB4 = 73,
+  RMB5 = 74,
+  RMB6 = 75,
+  RMB7 = 76,
 
-  UNKNOWN = 0xFF,
+  // Set memory bit
+  SMB0 = 77,
+  SMB1 = 78,
+  SMB2 = 79,
+  SMB3 = 80,
+  SMB4 = 81,
+  SMB5 = 82,
+  SMB6 = 83,
+  SMB7 = 84,
+
+  // Branch if bit reset
+  BBR0 = 85,
+  BBR1 = 86,
+  BBR2 = 87,
+  BBR3 = 88,
+  BBR4 = 89,
+  BBR5 = 90,
+  BBR6 = 91,
+  BBR7 = 92,
+
+  // Branch if bit set
+  BBS0 = 93,
+  BBS1 = 94,
+  BBS2 = 95,
+  BBS3 = 96,
+  BBS4 = 97,
+  BBS5 = 98,
+  BBS6 = 99,
+  BBS7 = 100,
+
+  // NMOS 6502 stable undocumented instructions
+  LAX = 101,
+  SAX = 102,
+  DCM = 103,
+  INS = 104,
+  SLO = 105,
+  RLA = 106,
+  SRE = 107,
+  RRA = 108,
+  ALR = 109,
+  ANC = 110,
+  AXS = 111,
+  ARR = 112,
+
+  UNKNOWN = 255,
 };
 
 enum struct instruction_payload_type: uint8_t {
@@ -143,6 +197,8 @@ enum struct instruction_payload_type: uint8_t {
   ZERO_PAGE_INDIRECT = 12 | SIZE_2,
   // relative branch address (an arbitrary 16 bit address)
   RELATIVE = 13 | SIZE_2,
+  // 8 bit relative branch and 8 bit address
+  BRANCH_IF_BIT = 14 | SIZE_3,
 
   // a specific 16 bit address
   ABSOLUTE_CONST = ABSOLUTE | CONST_FLAG,
@@ -170,6 +226,8 @@ enum struct instruction_payload_type: uint8_t {
   ZERO_PAGE_INDIRECT_CONST = ZERO_PAGE_INDIRECT | CONST_FLAG,
   // relative branch address (a specific 16 bit address)
   RELATIVE_CONST = RELATIVE | CONST_FLAG,
+  // 8 bit relative branch and 8 bit address
+  BRANCH_IF_BIT_CONST = BRANCH_IF_BIT | CONST_FLAG,
 };
 
 constexpr uint8_t instruction_size(instruction_payload_type pt) {
@@ -227,7 +285,8 @@ struct concrete_machine {
     _addresses_read{0},
     _values_read{0},
     _n_read(0),
-    _assumptions(true)
+    _assumptions(true),
+    _record_memory(true)
     {}
 
   static constexpr uint8_t FLAG_S = 0x80;
@@ -250,6 +309,10 @@ struct concrete_machine {
   }
 
   uint8_t zp(uint16_t val, bool is_constant) {
+    return val;
+  }
+
+  uint8_t relative(uint16_t val, bool is_constant) {
     return val;
   }
 
@@ -289,19 +352,32 @@ struct concrete_machine {
   bool cc_z() { return _p & FLAG_Z; }
   bool exited_early() { return _exited_early; }
 
+  bool record_memory() { return _record_memory; }
+  bool record_memory(bool val) { return (_record_memory = val); }
+
   uint8_t read(uint16_t address) {
-    assert(_n_read < 8);
-    _addresses_read[_n_read] = address;
-    _values_read[_n_read] = _memory[address];
-    _n_read++;
+    if (_record_memory) {
+      assert(_n_read < 8);
+      _addresses_read[_n_read] = address;
+      _values_read[_n_read] = _memory[address];
+      _n_read++;
+    }
+    if (ASSUME_VALID_STACK_USAGE) {
+      assume((address & 0xFF00 != 0x0100) || (address & 0xFF) > _sp);
+    }
     return _memory[address];
   }
 
   void write(uint16_t address, uint8_t val) {
-    assert(_n_written < 8);
-    _addresses_written[_n_written] = address;
-    _values_written[_n_written] = val;
-    _n_written++;
+    if (_record_memory) {
+      assert(_n_written < 8);
+      _addresses_written[_n_written] = address;
+      _values_written[_n_written] = val;
+      _n_written++;
+    }
+    if (ASSUME_VALID_STACK_USAGE) {
+      assume((address & 0xFF00 != 0x0100) || (address & 0xFF) > _sp);
+    }
     _memory[address] = E(val, _memory[address]);
   }
 
@@ -331,6 +407,10 @@ struct concrete_machine {
 
   bool uge(uint8_t first, uint8_t second) const {
     return first >= second;
+  }
+
+  bool ugt(uint8_t first, uint8_t second) const {
+    return first > second;
   }
 
   uint16_t from_bytes(uint8_t hi, uint8_t lo) const {
@@ -368,6 +448,7 @@ struct concrete_machine {
   uint8_t _sp;
   uint8_t _p;
   bool _exited_early;
+  bool _record_memory;
 };
 
 struct prover_context {
@@ -386,12 +467,18 @@ struct prover_context {
     for (int i = 0; i < 16; i++) {
       zp_vars.push_back(context.bv_const((zp_name + std::to_string(i)).c_str(), 8));
     }
+
+    std::string relative_name("relative");
+    for (int i = 0; i < 16; i++) {
+      zp_vars.push_back(context.bv_const((relative_name + std::to_string(i)).c_str(), 8));
+    }
   }
 
   z3::context context;
   std::vector<z3::expr> absolute_vars;
   std::vector<z3::expr> immediate_vars;
   std::vector<z3::expr> zp_vars;
+  std::vector<z3::expr> relative_vars;
 
   z3::expr u8(uint8_t n) {
     return context.bv_val(n, 8);
@@ -481,6 +568,14 @@ struct abstract_machine {
     }
   }
 
+  z3::expr relative(uint16_t payload, bool is_constant) {
+    if (is_constant) {
+      return ctx.u8((payload >> 8) & 0xFF);
+    } else {
+      return ctx.relative_vars.at((payload >> 8) & 0xFF);
+    }
+  }
+
   typedef z3::expr expr8;
   typedef z3::expr expr16;
 
@@ -504,6 +599,9 @@ struct abstract_machine {
     if (addr.get_sort().bv_size() == 8) {
       addr = extend(addr);
     }
+    if (ASSUME_VALID_STACK_USAGE) {
+      assume((addr & 0xFF00) != 0x100 || ugt(addr & 0xFF, extend(sp())));
+    }
     return _memory = E(z3::store(_memory, addr, val), _memory);
   }
 
@@ -524,6 +622,9 @@ struct abstract_machine {
   z3::expr read(z3::expr addr) {
     if (addr.get_sort().bv_size() == 8) {
       addr = extend(addr);
+    }
+    if (ASSUME_VALID_STACK_USAGE) {
+      assume((addr & 0xFF00) != 0x100 || ugt(addr & 0xFF, extend(sp())));
     }
     return z3::select(_memory, addr);
   }
@@ -597,6 +698,14 @@ struct abstract_machine {
    */
   z3::expr uge(z3::expr const first, uint8_t second) const {
     return z3::uge(first, second);
+  }
+
+  z3::expr ugt(z3::expr const first, z3::expr const second) const {
+    return z3::ugt(first, second);
+  }
+
+  z3::expr ugt(z3::expr const first, uint8_t second) const {
+    return z3::ugt(first, second);
   }
 
   z3::expr from_bytes(z3::expr hi, z3::expr lo) const {
@@ -702,8 +811,9 @@ struct emulator {
 
   typename machine::expr8 pull() {
     m.sp(m.sp() + 1);
-    // assume that the stack doesn't underflow
-    m.assume(m.sp() != 0);
+    if (ASSUME_NO_STACK_OVERFLOW) {
+      m.assume(m.sp() != 0);
+    }
     return m.read(m.from_bytes(0x1, m.sp()));
   }
 
@@ -711,8 +821,9 @@ struct emulator {
     auto addr = m.from_bytes(0x1, m.sp());
     m.write(addr, val);
     m.sp(m.sp() - 1);
-    // assume that the stack doesn't overflow
-    m.assume(m.sp() != 0xFF);
+    if (ASSUME_NO_STACK_OVERFLOW) {
+      m.assume(m.sp() != 0xFF);
+    }
     return val;
   }
 
@@ -740,25 +851,31 @@ struct emulator {
       return;
     }
 
-    m.pc(m.pc() + instruction_size(ins.payload_type));
-
-    bool is_constant = static_cast<uint8_t>(ins.payload_type & instruction_payload_type::CONST_FLAG);
+    bool is_constant = (uint8_t)(ins.payload_type & instruction_payload_type::CONST_FLAG);
 
     // Load possible values from the machine
-    auto absolute_payload = m.absolute(ins.payload, is_constant);
-    auto zp_payload = m.zp(ins.payload, is_constant);
-    auto immediate_payload = m.immediate(ins.payload, is_constant);
+    const auto absolute_payload = m.absolute(ins.payload, is_constant);
+    const auto zp_payload = m.zp(ins.payload & 0xFF, is_constant);
+    const auto immediate_payload = m.immediate(ins.payload & 0xFF, is_constant);
 
     // The address the instruction is working on
     auto absolute_var = absolute_payload;
     // The value the instruction is working on
     auto immediate_var = immediate_payload;
 
+    m.pc(m.pc() + instruction_size(ins.payload_type));
+
     switch(ins.payload_type & ~instruction_payload_type::CONST_FLAG) {
     case instruction_payload_type::NONE:
       // nothing to do
       break;
     case instruction_payload_type::RELATIVE:
+      if (m.uge(zp_payload, 0x80)) {
+        absolute_var = m.pc() - 0x100 + m.extend(zp_payload);
+      } else {
+        absolute_var = m.pc() + m.extend(zp_payload);
+      }
+      break;
     case instruction_payload_type::ABSOLUTE:
       absolute_var = absolute_payload;
       break;
@@ -805,6 +922,14 @@ struct emulator {
     case instruction_payload_type::ZERO_PAGE_INDIRECT:
       absolute_var = m.from_bytes(m.read((zp_payload + 1) & 0xFF),
                                 m.read(zp_payload));
+      break;
+    case instruction_payload_type::BRANCH_IF_BIT:
+      if (m.uge(zp_payload, 0x80)) {
+        absolute_var = m.pc() - 0x100 + m.extend(zp_payload);
+      } else {
+        absolute_var = m.pc() + m.extend(zp_payload);
+      }
+      immediate_var = m.zp(m.hibyte(absolute_payload), is_constant);
       break;
     default:
       assert(false);
@@ -995,15 +1120,28 @@ struct emulator {
       /* fallthrough */
     case instruction_name::ADC: {
       auto carry = m.ite(m.cc_c(), 0x01, 0x00);
-      auto sum = m.extend(immediate_var) + m.extend(m.a()) + m.extend(carry);
 
       if (DECIMAL_ENABLED) {
-        // TODO
+        auto sumIfDecimal =  (m.a() & 0xF) + (immediate_var & 0xF) + carry;
+        sumIfDecimal = m.ite(m.ugt(sumIfDecimal, 0x09), sumIfDecimal + 0x6, sumIfDecimal);
+        sumIfDecimal = (m.a() & 0xF0) + (immediate_var & 0xF0) + m.ite(m.ugt(sumIfDecimal, 0x0F), 0x10, 0) + (sumIfDecimal & 0x0F);
+
+        auto sumIfBinary = m.extend(immediate_var) + m.extend(m.a()) + m.extend(carry);
+
+        auto sum = m.ite(m.cc_d(), sumIfDecimal, sumIfBinary);
+        m.cc_v(0x80 == (0x80 & (m.lobyte(sum) ^ m.a()) & (m.lobyte(sum) ^ immediate_var)));
+        sum = sum + m.ite(m.cc_d() && m.uge(sum, 0xA0), 0x60, 0);
+        m.cc_c(m.hibyte(sum) != 0x00);
+        m.a(set_sz(m.lobyte(sum)));
       } else {
+        auto sum = m.extend(immediate_var) + m.extend(m.a()) + m.extend(carry);
+
         m.cc_v(0x80 == (0x80 & (m.lobyte(sum) ^ m.a()) & (m.lobyte(sum) ^ immediate_var)));
         m.cc_c(m.hibyte(sum) == 0x01);
-        m.a(set_sz(m.lobyte(sum)));
+        m.a(set_sz(m.lobyte(sum)));        m.a(set_sz(m.lobyte(sum)));
+
       }
+      
       break;
       }
     case instruction_name::CMP:
@@ -1152,6 +1290,31 @@ struct emulator {
       m.cc_c(m.uge(xa, immediate_var));
       break;
       }
+    case instruction_name::RMB0:
+    case instruction_name::RMB1:
+    case instruction_name::RMB2:
+    case instruction_name::RMB3:
+    case instruction_name::RMB4:
+    case instruction_name::RMB5:
+    case instruction_name::RMB6:
+    case instruction_name::RMB7: {
+      uint8_t bit = (uint8_t)ins.name - (uint8_t)instruction_name::RMB0;
+      uint8_t mask = (~(1 << bit)) & 0xFF;
+      m.write(absolute_var, immediate_var & mask);
+      break;
+      }
+    case instruction_name::SMB0:
+    case instruction_name::SMB1:
+    case instruction_name::SMB2:
+    case instruction_name::SMB3:
+    case instruction_name::SMB4:
+    case instruction_name::SMB5:
+    case instruction_name::SMB6:
+    case instruction_name::SMB7: {
+      uint8_t bit = (uint8_t)ins.name - (uint8_t)instruction_name::RMB0;
+      m.write(absolute_var, immediate_var | (1 << bit));
+      break;
+      }
     }
   }
 };
@@ -1165,13 +1328,7 @@ uint16_t read16(const uint8_t memory[256*256], const uint16_t ip) {
  * and returns the new instruction pointer.
  */
 uint16_t read_rel(const uint8_t memory[256*256], const uint16_t ip) {
-  uint8_t delta = memory[ip+1];
-  if (delta >= 0x80) {
-    return ip + 2 - 0x100 + delta;
-  } else {
-    return ip + 2 + delta;
-  }
-  return static_cast<int8_t>(memory[ip+1]);
+  return memory[ip+1];
 }
 
 #define BYTE memory[pc+1]
@@ -1455,7 +1612,7 @@ instruction decode(const uint8_t memory[256*256], const uint16_t pc) {
 #undef REL
 #undef DR
 
-int compareAbstractAndConcrete(char *rom) {
+int compare_abstract_and_concrete(char *rom) {
   std::cout << "Sizes: a:" << (sizeof(abstract_machine)) << std::endl << "c: " << (sizeof(concrete_machine)) << std::endl;
 
   try {
@@ -1465,6 +1622,7 @@ int compareAbstractAndConcrete(char *rom) {
     uint8_t memory[0x10000];
 
     prover_context prover_ctx;
+
     z3::context &ctx = prover_ctx.context;
     concrete_machine c_machine(0, memory);
     emulator<concrete_machine> c_emulator(c_machine);
@@ -1590,9 +1748,78 @@ int enumerate() {
   return 0;
 }
 
+int nes_test(char *rom) {
+  try {
+    char header[0x10];
+    char *prg;
+    char *chr;
+    uint8_t memory[0x10000];
+
+    concrete_machine c_machine(0, memory);
+    c_machine.record_memory(false);
+    emulator<concrete_machine> c_emulator(c_machine);
+
+    std::ifstream input(rom, std::ios::in | std::ios::binary);
+    printf("Loading file %s\n", rom);
+    input.read(header, sizeof header);
+    int prg_size = 0x4000 * header[4];
+    prg = new char[prg_size];
+    int chr_size = 0x4000 * header[5];
+
+    printf("iNES info: %02X %02X %02X %02X PRG:%02X CHR:%02X\n", header[0], header[1], header[2], header[3], header[4], header[5]);
+    chr = new char[chr_size];
+    input.read(prg, prg_size);
+    input.read(chr, chr_size);
+
+    for (uint16_t i = 0; i < prg_size && i < 0x8000; i++) {
+      memory[0x8000 + i] = prg[i];
+      if (prg_size == 0x4000) {
+        memory[0xC000 + i] = prg[i];
+      }
+    }
+
+    c_machine.pc(0xC000);
+    printf("pc:%04X\n", c_machine.pc());
+
+    std::string status;
+
+    uint64_t instructions = 0;
+    while (c_machine.pc() != 1) {
+      instruction ins = decode(memory, c_machine.pc());
+
+      instructions++;
+
+      printf("%04X  ", c_machine.pc());
+      int i = 0, size = instruction_size(ins.payload_type);
+      for (; i < size; i++) {
+        printf("%02X ", memory[c_machine.pc() + i]);
+      }
+      for (; i < 3; i++) {
+        printf("   ");
+      }
+      printf(" A:%02X X:%02X Y:%02X P:%02X SP:%02X\n",
+        c_machine.a(),
+        c_machine.x(),
+        c_machine.y(),
+        c_emulator.flags_to_byte(),
+        c_machine.sp());
+
+      c_machine.reset_early_exit();
+      c_emulator.run(ins);
+    }
+
+  } catch(z3::exception e) {
+    std::cout << e << std::endl;
+  }
+  return 0;
+}
+
 int main(int argc, char **argv) {
+  sample();
   if (argv[1] == std::string("test")) {
-    return compareAbstractAndConcrete(argv[2]);
+    return compare_abstract_and_concrete(argv[2]);
+  } else if (argv[1] == std::string("nestest")) {
+    return nes_test(argv[2]);
   } else if (argv[1] == std::string("init")) {
     return initialize();
   } else if (argv[1] == std::string("enumerate")) {

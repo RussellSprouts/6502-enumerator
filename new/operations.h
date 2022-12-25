@@ -1,14 +1,29 @@
 #include "z3++.h"
+#include "z3_context.h"
 
 #define SIMPLE_OP(op) zu<N> operator op(const zu<N> other) { return zu<N>(val op other.val); }
 
-struct zb {
-    zb(z3::expr _val): val(_val) {
-        if (_val.is_bv()) {
-            val = val != 0;
-        } else if (!_val.is_bool()) {
+struct zbool {
+    zbool(z3::expr _val): val(_val) {
+        if (!_val.is_bool()) {
             assert(false);
         }
+    }
+    zbool(bool _val): val(z3_ctx.bool_val(_val)) {}
+
+    zbool operator==(const zbool& other) {
+        return val == other.val;
+    }
+    zbool operator&&(const zbool& other) {
+        return val && other.val;
+    }
+    zbool operator||(const zbool& other) {
+        return val || other.val;
+    }
+
+    template<int B>
+    explicit operator zu<B>() const {
+        return z3::ite(val, val.ctx().bv_val(1, B), val.ctx().bv_val(0, B));
     }
 
     z3::expr val;
@@ -32,6 +47,7 @@ struct zu {
             assert(false);
         }
     }
+    zu(uint16_t _val): val(z3_ctx.bv_val(_val, N)) {}
 
     SIMPLE_OP(+)
     SIMPLE_OP(-)
@@ -39,27 +55,27 @@ struct zu {
     SIMPLE_OP(|)
     SIMPLE_OP(^)
 
-    zb operator==(const zu<N> other) const {
+    zbool operator==(const zu<N> other) const {
         return val == other.val;
     }
 
-    zb operator!=(const zu<N> other) const {
+    zbool operator!=(const zu<N> other) const {
         return val != other.val;
     }
 
-    zb operator>(const zu<N> other) const {
+    zbool operator>(const zu<N> other) const {
         return z3::ugt(val, other.val);
     }
 
-    zb operator>=(const zu<N> other) const {
+    zbool operator>=(const zu<N> other) const {
         return z3::uge(val, other.val);
     }
 
-    zb operator<(const zu<N> other) const {
+    zbool operator<(const zu<N> other) const {
         return z3::ult(val, other.val);
     }
 
-    zb operator<=(const zu<N> other) const {
+    zbool operator<=(const zu<N> other) const {
         return z3::ule(val, other.val);
     }
 
@@ -71,10 +87,6 @@ struct zu {
         return z3::shl(val, amount);
     }
 
-    template <int B>
-    explicit operator zu<B>() const {
-        return val;
-    }
 
     zu<8> low() {
         if (N > 8) {
@@ -92,7 +104,7 @@ struct zu {
         }
     }
 
-    static zu<N> ite(const zb cond, const zu<N> cons, const zu<N> alt) {
+    static zu<N> ite(const zbool cond, const zu<N> cons, const zu<N> alt) {
         return z3::ite(cond, cons, alt);
     }
 
@@ -104,7 +116,7 @@ struct zu {
     z3::expr val; 
 };
 
-typedef zb zbool;
+typedef zbool zbool;
 typedef zu<8> zuint8_t;
 typedef zu<16> zuint16_t;
 
@@ -183,8 +195,13 @@ struct cu {
 };
 
 int sample() {
-    z3::context c;
-    auto v = c.bv_val(14, 8);
+    zbool b1(false);
+    zbool b2 = b1 == false;
+
+    zuint8_t a1(5);
+    std::cout << (a1 + 4).val << std::endl;
+
+    auto v = z3_ctx.bv_val(14, 8);
 
     zu<8> a(v);
     zu<16> b = (zu<16>)a;

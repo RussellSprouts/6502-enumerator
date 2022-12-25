@@ -1,38 +1,58 @@
+// Adds assertions that stack operations never cause
+// the stack pointer to overflow or underflow. This
+// is useful for ensuring the stack usage is valid.
+#define ASSUME_NO_STACK_OVERFLOW true
+// Adds assertions that all memory operations in page 1
+// are inside of the active stack area, since anything outside
+// of it could be overwritten by an interrupt.
+#define ASSUME_VALID_STACK_USAGE true
+// Adds assertions that the arguments to ADC and SBC are valid
+// BCD when the decimal flag is set.
+#define ASSUME_VALID_BCD true
+// When using the hash machine, the number of reads and writes
+// to record
+#define NUM_ADDRESSES_TO_REMEMBER 8
+
+// Set this to PROCESSOR_2a03, PROCESSOR_65c02, or PROCESSOR_NMOS_6502
+#define PROCESSOR_2a03
+
+
+#ifdef PROCESSOR_2a03
+// The processor on the NES is an NMOS 6502,
+// but the decimal mode is cut for patent reasons.
+
+#define DECIMAL_ENABLED        false
+#define HAS_JUMP_INDIRECT_BUG  true
+#define USE_65c02_DECIMAL      false
+
+#elif defined(PROCESSOR_65c02)
+// The 65c02 family of processors includes
+// extra instructions and fixes some bugs.
+
+#define DECIMAL_ENABLED        true
+#define HAS_JUMP_INDIRECT_BUG  false
+#define USE_65c02_DECIMAL      true
+
+#elif defined(PROCESSOR_NMOS_6502)
+// The classic 6502
+
+#define DECIMAL_ENABLED        true
+#define HAS_JUMP_INDIRECT_BUG  true
+#define USE_65c02_DECIMAL      false
+
+#endif
+
 #include <iostream>
 #include <vector>
 #include <iostream>
 #include <fstream>
 #include "z3++.h"
-#include "operations.h"
+#include "zstdint.h"
+#include "initial_state.h"
+#include "nstdint.h"
 
-
-// Configs
-
-// Adds assertions that stack operations never cause
-// the stack pointer to overflow or underflow
-#define ASSUME_NO_STACK_OVERFLOW true
-// Adds assertions that all memory operations in page 1
-// are inside of the active stack area.
-#define ASSUME_VALID_STACK_USAGE true
-// Allows use of temporary memory locations.
-// The result of writing to these locations is ignored.
-#define IGNORE_TMP_MEMORY false
-
-#define PROCESSOR_NMOS_6502
-
-// Results
-#ifdef PROCESSOR_NMOS_6502
-
-#define DECIMAL_ENABLED        true
-#define HAS_JUMP_INDIRECT_BUG  true
-
-#elif defined(PROCESSOR_65c02)
-
-#define DECIMAL_ENABLED        true
-#define HAS_JUMP_INDIRECT_BUG  false
-
-#endif
-
+// An enum of instructions, including variants across different
+// versions of the processor.
 enum struct instruction_name: uint8_t {
   NONE = 0,
 
@@ -162,41 +182,59 @@ enum struct instruction_name: uint8_t {
   UNKNOWN = 255,
 };
 
+// Instructions can have const payloads or arbitrary payloads
+// with various addressing modes.
+// Arbitrary payloads are either z3 named variables, representing
+// an unknown initial state, or a value based of a hash of the name.
+// For example, ABSOLUTE with payload 3, will be a z3 value named Absolute3
+// or an arbitrary consistent value based on the hash seed.
+// Constant payloads are actual values.
 enum struct instruction_payload_type: uint8_t {
+  // Flag indicating the instruction is 2 bytes long
   SIZE_2 = 0x40,
+  // Flag indicating the instruction is 3 bytes long
   SIZE_3 = 0x60,
+  // Flag indicating the payload is a constant value.
   CONST_FLAG = 0x80,
 
   // for instructions with no operands
-  NONE = 0,
+  NONE = 0x0,
   // an arbitrary 16 bit address
-  ABSOLUTE = 1 | SIZE_3,
+  ABSOLUTE = 0x1 | SIZE_3,
   // am arbitrary 16 bit address + x
-  ABSOLUTE_X = 2 | SIZE_3,
+  ABSOLUTE_X = 0x2 | SIZE_3,
   // an arbitrary 16 bit address + y
-  ABSOLUTE_Y = 3 | SIZE_3,
+  ABSOLUTE_Y = 0x3 | SIZE_3,
   // the pointer at (an arbitrary 8 bit address + x)
-  X_INDIRECT = 4 | SIZE_2,
+  X_INDIRECT = 0x4 | SIZE_2,
   // (the pointer at an arbitrary 8 bit address) + y
-  INDIRECT_Y = 5 | SIZE_2,
+  INDIRECT_Y = 0x5 | SIZE_2,
   // an arbitrary 8 bit address
-  ZERO_PAGE = 6 | SIZE_2,
+  ZERO_PAGE = 0x6 | SIZE_2,
   // an arbitrary 8 bit address + x
-  ZERO_PAGE_X = 7 | SIZE_2,
+  ZERO_PAGE_X = 0x7 | SIZE_2,
   // an arbitrary 8 bit address + y
-  ZERO_PAGE_Y = 8 | SIZE_2,
+  ZERO_PAGE_Y = 0x8 | SIZE_2,
   // an arbitrary immediate constant
-  IMMEDIATE = 9 | SIZE_2,
+  IMMEDIATE = 0x9 | SIZE_2,
   // the pointer at (an arbitrary 16 bit address)
-  INDIRECT_ABSOLUTE = 10 | SIZE_3,
+  INDIRECT_ABSOLUTE = 0xA | SIZE_3,
   // the pointer at (an arbitrary 16 bit address + x)
-  X_INDIRECT_ABSOLUTE = 11 | SIZE_2,
+  X_INDIRECT_ABSOLUTE = 0xB | SIZE_2,
   // the pointer at (an arbitrary 8 bit address)
-  ZERO_PAGE_INDIRECT = 12 | SIZE_2,
+  ZERO_PAGE_INDIRECT = 0xC | SIZE_2,
   // relative branch address (an arbitrary 16 bit address)
-  RELATIVE = 13 | SIZE_2,
+  RELATIVE = 0xD | SIZE_2,
   // 8 bit relative branch and 8 bit address
-  BRANCH_IF_BIT = 14 | SIZE_3,
+  BRANCH_IF_BIT = 0xE | SIZE_3,
+  // Software stack addressing on the zero page using the X register,
+  // i.e., lda Stack+payload, x
+  SOFTWARE_STACK_CONST = 0xF | SIZE_2 | CONST_FLAG,
+  // i.e., lda (Stack + payload, x)
+  SOFTWARE_STACK_INDIRECT_CONST = 0x10 | SIZE_2 | CONST_FLAG,
+  // A reference to a known subroutine with the given ID. Allows
+  // defining known subroutines and optimizing code which calls them.
+  KNOWN_SUBROUTINE_CONST = 0x11 | SIZE_3 | CONST_FLAG,
 
   // a specific 16 bit address
   ABSOLUTE_CONST = ABSOLUTE | CONST_FLAG,
@@ -258,7 +296,9 @@ constexpr instruction_payload_type operator~(instruction_payload_type lhs)
 }
 
 /**
- * Instruction encoding 
+ * Instruction encoding in 4 bytes. Includes instructions from
+ * all processor versions and payloads of constant values or
+ * symbolic values.
  */
 struct instruction {
   explicit instruction(instruction_name name, instruction_payload_type payload_type, uint16_t payload) :
@@ -271,577 +311,167 @@ struct instruction {
   uint16_t payload;
 };
 
-struct concrete_machine {
-  explicit concrete_machine(uint64_t seed, uint8_t *memory):
-    _seed(seed),
-    _memory(memory),
-    _a(0),
-    _x(0),
-    _y(0),
-    _sp(0xFD),
-    _p(FLAG_ALWAYS | FLAG_I),
-    _addresses_read{0},
-    _values_read{0},
-    _n_read(0),
-    _assumptions(true),
-    _record_memory(true)
-    {}
+/**
+ * @brief An emulator which can operate on z3 symbolic values or actual numbers.
+ * 
+ * @tparam u8 
+ * @tparam u16 
+ * @tparam boolean 
+ * @tparam memory_t 
+ * @tparam initial_state 
+ */
+template<typename u8, typename u16, typename boolean, typename memory_t, typename initial_state>
+struct machine {
+  u8 _a;
+  u8 _x;
+  u8 _y;
+  u8 _sp;
+  boolean _cc_s;
+  boolean _cc_v;
+  boolean _cc_i;
+  boolean _cc_d;
+  boolean _cc_c;
+  boolean _cc_z;
+  u16 _pc;
+  boolean _assumptions;
+  boolean _has_exited;
+  memory_t _memory;
+  initial_state& _initial_state;
 
-  static constexpr uint8_t FLAG_S = 0x80;
-  static constexpr uint8_t FLAG_V = 0x40;
-  static constexpr uint8_t FLAG_ALWAYS = 0x20;
-  static constexpr uint8_t FLAG_D = 0x08;
-  static constexpr uint8_t FLAG_I = 0x04;
-  static constexpr uint8_t FLAG_Z = 0x02;
-  static constexpr uint8_t FLAG_C = 0x01;
+  machine(initial_state &s):
+    _a(s.u8("a")),
+    _x(s.u8("x")),
+    _y(s.u8("y")),
+    _sp(s.u8("sp")),
+    _cc_s(s.boolean("cc_s")),
+    _cc_v(s.boolean("cc_v")),
+    _cc_i(s.boolean("cc_i")),
+    _cc_d(s.boolean("cc_d")),
+    _cc_c(s.boolean("cc_c")),
+    _cc_z(s.boolean("cc_z")),
+    _pc(s.u16("pc")),
+    _assumptions(s.boolean(true)),
+    _has_exited(s.boolean(false)),
+    _memory(s.memory()),
+    _initial_state(s) {}
 
-  typedef uint8_t expr8;
-  typedef uint16_t expr16;
+  template <typename other_machine>
+  void copy_from(other_machine &other) {
+    _has_exited = false;
+    a(other.a().val);
+    x(other.x().val);
+    y(other.y().val);
+    sp(other.sp().val);
+    cc_s(other.cc_s());
+    cc_v(other.cc_v());
+    cc_i(other.cc_i());
+    cc_d(other.cc_d());
+    cc_c(other.cc_c());
+    cc_z(other.cc_z());
+    pc(other.pc().val);
+  }
 
-  uint8_t immediate(uint16_t val, bool is_constant) {
+  // When updating any part of the machine state,
+  // we guard on whether the machine has already exited
+  // the current instruction sequence. That way, we can
+  // execute a series of instructions unconditionally, but
+  // model the case where a conditional branch is taken.
+  u8 a() const { return _a; }
+  void a(u8 val) { _a = ite8(_has_exited, _a, val); }
+  u8 x() const { return _x; }
+  void x(u8 val) { _x = ite8(_has_exited, _x, val); }
+  u8 y() const { return _y; }
+  void y(u8 val) { _y = ite8(_has_exited, _y, val); }
+  u8 sp() const { return _sp; }
+  void sp(u8 val) { _sp = ite8(_has_exited, _sp, val); }
+  boolean cc_s() const { return _cc_s; }
+  void cc_s(boolean val) { _cc_s = iteB(_has_exited, _cc_s, val); }
+  boolean cc_v() const { return _cc_v; }
+  void cc_v(boolean val) { _cc_v = iteB(_has_exited, _cc_v, val); }
+  boolean cc_i() const { return _cc_i; }
+  void cc_i(boolean val) { _cc_i = iteB(_has_exited, _cc_i, val); }
+  boolean cc_d() const { return _cc_d; }
+  void cc_d(boolean val) { _cc_d = iteB(_has_exited, _cc_d, val); }
+  boolean cc_c() const { return _cc_c; }
+  void cc_c(boolean val) { _cc_c = iteB(_has_exited, _cc_c, val); }
+  boolean cc_z() const { return _cc_z; }
+  void cc_z(boolean val) { _cc_z = iteB(_has_exited, _cc_z, val); }
+  u16 pc() const { return _pc; }
+  void pc(u16 val) { _pc = ite16(_has_exited, _pc, val); }
+
+  // Add an assumption that must be true for the current execution
+  // to be valid and defined behavior. If the assumptions end up
+  // false, that means that the execution of the instructions resulted
+  // in undefined behavior, so it should be ignored.
+  void assume(boolean val) {
+    _assumptions = _assumptions && (_has_exited || val);
+  }
+  void exit_if(boolean cond, u16 target) {
+    pc(ite16(cond, target, _pc)); 
+    _has_exited = _has_exited || cond;
+  }
+  void exit(u16 target) {
+    exit_if(true, target);
+  }
+  void reset_exit() {
+    _has_exited = false;
+  }
+
+  u8 set_sz(u8 val) {
+    cc_s(val >= 0x80);
+    cc_z(val == 0);
     return val;
   }
 
-  uint16_t absolute(uint16_t val, bool is_constant) {
-    return val;
-  }
-
-  uint8_t zp(uint16_t val, bool is_constant) {
-    return val;
-  }
-
-  uint8_t relative(uint16_t val, bool is_constant) {
-    return val;
-  }
-
-  void exit(uint16_t address) {
-    exit_if(true, address);
-  }
-
-  void exit_if(bool cond, uint16_t address) {
-    if (cond) {
-      _pc = E(address, _pc); 
-      _exited_early = E(cond, _exited_early);
-    }
-  }
-
-  uint16_t pc(uint16_t val) { return _pc = E(val, _pc); }
-  uint8_t a(uint8_t val) { return _a = E(val, _a); }
-  uint8_t x(uint8_t val) { return _x = E(val, _x); }
-  uint8_t y(uint8_t val) { return _y = E(val, _y); }
-  uint8_t sp(uint8_t val) { return _sp = E(val, _sp); }
-  bool cc_s(bool val) { return (_p = E((_p & ~FLAG_S) | (val ? FLAG_S : 0), _p)); }
-  bool cc_v(bool val) { return (_p = E((_p & ~FLAG_V) | (val ? FLAG_V : 0), _p)); }
-  bool cc_i(bool val) { return (_p = E((_p & ~FLAG_I) | (val ? FLAG_I : 0), _p)); }
-  bool cc_d(bool val) { return (_p = E((_p & ~FLAG_D) | (val ? FLAG_D : 0), _p)); }
-  bool cc_c(bool val) { return (_p = E((_p & ~FLAG_C) | (val ? FLAG_C : 0), _p)); }
-  bool cc_z(bool val) { return (_p = E((_p & ~FLAG_Z) | (val ? FLAG_Z : 0), _p)); }
-
-  uint16_t pc() { return _pc; }
-  uint8_t a() { return _a; }
-  uint8_t x() { return _x; }
-  uint8_t y() { return _y; }
-  uint8_t sp() { return _sp; }
-  bool cc_s() { return _p & FLAG_S; }
-  bool cc_v() { return _p & FLAG_V; }
-  bool cc_i() { return _p & FLAG_I; }
-  bool cc_d() { return _p & FLAG_D; }
-  bool cc_c() { return _p & FLAG_C; }
-  bool cc_z() { return _p & FLAG_Z; }
-  bool exited_early() { return _exited_early; }
-
-  bool record_memory() { return _record_memory; }
-  bool record_memory(bool val) { return (_record_memory = val); }
-
-  uint8_t read(uint16_t address) {
-    if (_record_memory) {
-      assert(_n_read < 8);
-      _addresses_read[_n_read] = address;
-      _values_read[_n_read] = _memory[address];
-      _n_read++;
-    }
+  u8 read(u16 addr) {
     if (ASSUME_VALID_STACK_USAGE) {
-      assume((address & 0xFF00) != 0x0100 || (address & 0xFF) > _sp);
+      assume((addr & 0xFF00) != 0x100 || ((addr & 0xFF) > u16(sp())));
     }
-    return _memory[address];
+    return _memory.read(addr);
   }
 
-  void write(uint16_t address, uint8_t val) {
-    if (_record_memory) {
-      assert(_n_written < 8);
-      _addresses_written[_n_written] = address;
-      _values_written[_n_written] = val;
-      _n_written++;
-    }
+  void write(u16 addr, u8 val) {
     if (ASSUME_VALID_STACK_USAGE) {
-      assume((address & 0xFF00) != 0x0100 || (address & 0xFF) > _sp);
+      assume((addr & 0xFF00) != 0x100 || ((addr & 0xFF) > u16(sp())));
     }
-    _memory[address] = E(val, _memory[address]);
+    _memory.write_if(!_has_exited, addr, val);
   }
 
-  uint8_t lobyte(uint16_t val) {
-    return val;
-  }
-
-  uint8_t hibyte(uint16_t val) {
-    return val >> 8;
-  }
-
-  uint16_t ite(bool cond, uint16_t conseq, uint16_t alt) {
-    return cond ? conseq : alt;
-  }
-
-  uint8_t inline shl(const uint8_t val) const {
-    return val << 1;
-  }
-
-  uint8_t inline shr(const uint8_t val) const {
-    return val >> 1;
-  }
-
-  uint16_t extend(uint8_t val) {
-    return val;
-  }
-
-  bool uge(uint8_t first, uint8_t second) const {
-    return first >= second;
-  }
-
-  bool ugt(uint8_t first, uint8_t second) const {
-    return first > second;
-  }
-
-  uint16_t from_bytes(uint8_t hi, uint8_t lo) const {
-    return (hi << 8) | lo;
-  }
-
-  void reset_early_exit() {
-    _exited_early = false;
-  }
-
-  uint16_t _addresses_read[8];
-  uint8_t _values_read[8];
-  uint8_t _n_read;
-  uint16_t _addresses_written[8];
-  uint8_t _values_written[8];
-  uint8_t _n_written;
-  bool _assumptions;
-
-  void assume(bool value) {
-    _assumptions = E(_assumptions && value,_assumptions);
-  }
-
-  private:
-  inline uint16_t E(uint16_t val, uint16_t orig) {
-    return _exited_early ? orig : val;
-  }
-
-  uint64_t _seed;
-
-  uint16_t _pc;
-  uint8_t *_memory;
-  uint8_t _a;
-  uint8_t _x;
-  uint8_t _y;
-  uint8_t _sp;
-  uint8_t _p;
-  bool _exited_early;
-  bool _record_memory;
-};
-
-struct prover_context {
-  prover_context() {
-    std::string absolute_name("absolute");
-    for (int i = 0; i < 16; i++) {
-      absolute_vars.push_back(context.bv_const((absolute_name + std::to_string(i)).c_str(), 16));
-    }
-    
-    std::string immediate_name("immediate");
-    for (int i = 0; i < 16; i++) {
-      immediate_vars.push_back(context.bv_const((immediate_name + std::to_string(i)).c_str(), 8));
-    }
-    
-    std::string zp_name("zp");
-    for (int i = 0; i < 16; i++) {
-      zp_vars.push_back(context.bv_const((zp_name + std::to_string(i)).c_str(), 8));
-    }
-
-    std::string relative_name("relative");
-    for (int i = 0; i < 16; i++) {
-      zp_vars.push_back(context.bv_const((relative_name + std::to_string(i)).c_str(), 8));
-    }
-  }
-
-  z3::context context;
-  std::vector<z3::expr> absolute_vars;
-  std::vector<z3::expr> immediate_vars;
-  std::vector<z3::expr> zp_vars;
-  std::vector<z3::expr> relative_vars;
-
-  z3::expr u8(uint8_t n) {
-    return context.bv_val(n, 8);
-  }
-
-  z3::expr u8(const char *n) {
-    return context.bv_const(n, 8);
-  }
-
-  z3::expr u16(uint16_t n) {
-    return context.bv_val(n, 16);
-  }
-
-  z3::expr u16(const char *n) {
-    return context.bv_const(n, 16);
-  }
-
-  z3::expr boolean(bool b) {
-    return context.bool_val(b);
-  }
-
-  z3::expr boolean(const char *n) {
-    return context.bool_const(n);
-  }
-
-  z3::expr memory() {
-    return context.constant("memory", context.array_sort(context.bv_sort(16), context.bv_sort(8)));
-  }
-};
-
-struct abstract_machine {
-  explicit abstract_machine(prover_context &c) : 
-  ctx(c),
-  _exited_early(c.boolean(false)),
-  _memory(c.memory()),
-  _assumptions(c.boolean(true)),
-  _a(c.u8("a")),
-  _x(c.u8("x")),
-  _y(c.u8("y")),
-  _sp(c.u8("sp")),
-  _cc_s(c.boolean("cc_s")),
-  _cc_v(c.boolean("cc_v")),
-  _cc_i(c.boolean("cc_i")),
-  _cc_d(c.boolean("cc_d")),
-  _cc_c(c.boolean("cc_c")),
-  _cc_z(c.boolean("cc_z")),
-  _pc(c.u16("pc")) {
-  }
-
-  explicit abstract_machine(prover_context& c, concrete_machine &other): abstract_machine(c) {
-    _a = ctx.u8(other.a());
-    _x = ctx.u8(other.x());
-    _y = ctx.u8(other.y());
-    _sp = ctx.u8(other.sp());
-    _cc_s = ctx.boolean(other.cc_s());
-    _cc_v = ctx.boolean(other.cc_v());
-    _cc_i = ctx.boolean(other.cc_i());
-    _cc_d = ctx.boolean(other.cc_d());
-    _cc_c = ctx.boolean(other.cc_c());
-    _cc_z = ctx.boolean(other.cc_z());
-
-    _exited_early = ctx.boolean(other.exited_early());
-    _pc = ctx.u16(other.pc());
-  }
-
-  z3::expr absolute(uint16_t payload, bool is_constant) {
-    if (is_constant) {
-      return ctx.u16(payload);
-    } else {
-      return ctx.absolute_vars.at(payload);
-    }
-  }
-
-  z3::expr immediate(uint16_t payload, bool is_constant) {
-    if (is_constant) {
-      return ctx.u8(payload & 0xFF);
-    } else {
-      return ctx.immediate_vars.at(payload);
-    }
-  }
-
-  z3::expr zp(uint16_t payload, bool is_constant) {
-    if (is_constant) {
-      return ctx.u8(payload & 0xFF);
-    } else {
-      return ctx.zp_vars.at(payload);
-    }
-  }
-
-  z3::expr relative(uint16_t payload, bool is_constant) {
-    if (is_constant) {
-      return ctx.u8((payload >> 8) & 0xFF);
-    } else {
-      return ctx.relative_vars.at((payload >> 8) & 0xFF);
-    }
-  }
-
-  typedef z3::expr expr8;
-  typedef z3::expr expr16;
-
-  void exit(z3::expr const address) {
-    exit_if(ctx.boolean(true), address);
-  }
-
-  void exit_if(z3::expr const cond, z3::expr const address) {
-    _pc = E(ite(cond, address, _pc), _pc); 
-    _exited_early = E(cond, _exited_early);
-  }
-
-  z3::expr E(z3::expr new_val, z3::expr same) const {
-    return ite(!_exited_early, new_val, same);
-  }
-
-  /**
-   * Writes the val to the addr given. Returns the current memory array.
-   */
-  z3::expr write(z3::expr addr, z3::expr val) {
-    if (addr.get_sort().bv_size() == 8) {
-      addr = extend(addr);
-    }
-    if (ASSUME_VALID_STACK_USAGE) {
-      assume((addr & 0xFF00) != 0x100 || ugt(addr & 0xFF, extend(sp())));
-    }
-    return _memory = E(z3::store(_memory, addr, val), _memory);
-  }
-
-  /**
-   * Writes the val to the addr given. Returns the current memory array.
-   */
-  z3::expr write(z3::expr addr, uint8_t val) {
-    return write(addr, ctx.u8(val));
-  }
-
-  z3::expr write(uint16_t addr, uint8_t val) {
-    return write(ctx.u16(addr), ctx.u8(val));
-  }
-
-  /**
-   * Reads the value at addr and returns it as an 8-bit bitvector.
-   */
-  z3::expr read(z3::expr addr) {
-    if (addr.get_sort().bv_size() == 8) {
-      addr = extend(addr);
-    }
-    if (ASSUME_VALID_STACK_USAGE) {
-      assume((addr & 0xFF00) != 0x100 || ugt(addr & 0xFF, extend(sp())));
-    }
-    return z3::select(_memory, addr);
-  }
-
-  z3::expr read(uint16_t addr) {
-    return read(ctx.u16(addr));
-  }
-
-  void assume(z3::expr value) {
-    _assumptions = E(_assumptions && value, _assumptions);
-  }
-
-  /**
-   * Takes an 8-bit bitvector and zero-extends it to a 16-bit bv.
-   */
-  z3::expr extend(z3::expr const val) const {
-    return z3::zext(val, 8);
-  }
-
-  /**
-   * If-then-else. If c, then t, else e.
-   */
-  z3::expr ite(z3::expr const c, z3::expr const t, z3::expr const e) const {
-    return z3::ite(c, t, e);
-  }
-
-  /**
-   * If-then-else with 8-bit literals instead of `z3::expr`s.
-   */
-  z3::expr ite(z3::expr const cond, uint8_t t, uint8_t e) const {
-    return ite(cond, ctx.u8(t), ctx.u8(e));
-  }
-
-  /**
-   * Shifts the input left by 1.
-   */
-  z3::expr shl(z3::expr const val) const {
-    return z3::shl(val, 1);
-  }
-
-  /**
-   * Shifts the input right by 1 (logical shift right).
-   */
-  z3::expr shr(z3::expr const val) const {
-    return z3::lshr(val, 1);
-  }
-
-  /**
-   * Extracts the low byte of the 16-bit bv.
-   */
-  z3::expr lobyte(z3::expr const val) const {
-    return val.extract(7, 0);
-  }
-
-  /**
-   * Extracts the high byte of the 16-bit bv.
-   */
-  z3::expr hibyte(z3::expr const val) const {
-    return val.extract(15, 8);
-  }
-
-  /**
-   * Unsigned greater-than or equal.
-   */
-  z3::expr uge(z3::expr const first, z3::expr const second) const {
-    return z3::uge(first, second);
-  }
-
-  /**
-   * Unsigned greater-than or equal, with a constant.
-   */
-  z3::expr uge(z3::expr const first, uint8_t second) const {
-    return z3::uge(first, second);
-  }
-
-  z3::expr ugt(z3::expr const first, z3::expr const second) const {
-    return z3::ugt(first, second);
-  }
-
-  z3::expr ugt(z3::expr const first, uint8_t second) const {
-    return z3::ugt(first, second);
-  }
-
-  z3::expr from_bytes(z3::expr hi, z3::expr lo) const {
-    return z3::concat(hi, lo);
-  }
-
-  z3::expr from_bytes(uint8_t hi, z3::expr lo) const {
-    return from_bytes(ctx.u8(hi), lo);
-  }
-
-  z3::expr a(z3::expr const val) { return _a = E(val, _a); }
-  z3::expr a(uint8_t val) { return a(ctx.u8(val)); }
-  z3::expr x(z3::expr const val) { return _x = E(val, _x); }
-  z3::expr x(uint8_t val) { return x(ctx.u8(val)); }
-  z3::expr y(z3::expr const val) { return _y = E(val, _y); }
-  z3::expr y(uint8_t val) { return y(ctx.u8(val)); }
-  z3::expr sp(z3::expr const val) { return _sp = E(val, _sp); }
-  z3::expr sp(uint8_t val) { return sp(ctx.u8(val)); }
-  z3::expr cc_s(z3::expr const val) { return _cc_s = E(val, _cc_s); }
-  z3::expr cc_s(bool val) { return cc_s(ctx.boolean(val)); }
-  z3::expr cc_v(z3::expr const val) { return _cc_v = E(val, _cc_v); }
-  z3::expr cc_v(bool val) { return cc_v(ctx.boolean(val)); }
-  z3::expr cc_i(z3::expr const val) { return _cc_i = E(val, _cc_i); }
-  z3::expr cc_i(bool val) { return cc_i(ctx.boolean(val)); }
-  z3::expr cc_d(z3::expr const val) { return _cc_d = E(val, _cc_d); }
-  z3::expr cc_d(bool val) { return cc_d(ctx.boolean(val)); }
-  z3::expr cc_c(z3::expr const val) { return _cc_c = E(val, _cc_c); }
-  z3::expr cc_c(bool val) { return cc_c(ctx.boolean(val)); }
-  z3::expr cc_z(z3::expr const val) { return _cc_z = E(val, _cc_z); }
-  z3::expr cc_z(bool val) { return cc_z(ctx.boolean(val)); }
-  z3::expr pc(z3::expr const val) { return _pc = E(val, _pc); }
-  z3::expr pc(uint16_t val) { return pc(ctx.u16(val)); }  
-
-  z3::expr a() { return _a; }
-  z3::expr x() { return _x; }
-  z3::expr y() { return _y; }
-  z3::expr sp() { return _sp; }
-  z3::expr cc_s() { return _cc_s; }
-  z3::expr cc_v() { return _cc_v; }
-  z3::expr cc_i() { return _cc_i; }
-  z3::expr cc_d() { return _cc_d; }
-  z3::expr cc_c() { return _cc_c; }
-  z3::expr cc_z() { return _cc_z; }
-  z3::expr pc() { return _pc; }
-  z3::expr exited_early() { return _exited_early; }
-  z3::expr memory() { return _memory; }
-
-  void reset_early_exit() {
-    _exited_early = ctx.boolean(false);
-  }
-
-  abstract_machine& simplify() {
-    _exited_early = _exited_early.simplify();
-    _memory = _memory.simplify();
-    _a = _a.simplify();
-    _x = _x.simplify();
-    _y = _y.simplify();
-    _sp = _sp.simplify();
-    _cc_s = _cc_s.simplify();
-    _cc_v = _cc_v.simplify();
-    _cc_i = _cc_i.simplify();
-    _cc_d = _cc_d.simplify();
-    _cc_c = _cc_c.simplify();
-    _cc_z = _cc_z.simplify();
-    _pc = _pc.simplify();
-
-    return *this;
-  }
-
-  private:
-  prover_context &ctx;
-
-  z3::expr _exited_early;
-  z3::expr _memory;
-  z3::expr _assumptions;
-
-  // The internal state of the machine.
-  z3::expr _a;
-  z3::expr _x;
-  z3::expr _y;
-  z3::expr _sp;
-  z3::expr _cc_s;
-  z3::expr _cc_v;
-  z3::expr _cc_i;
-  z3::expr _cc_d;
-  z3::expr _cc_c;
-  z3::expr _cc_z;
-  z3::expr _pc;
-};
-
-template<typename machine>
-struct emulator {
-
-  explicit emulator(machine &m): m(m) {
-  }
-  machine &m;
-
-  typename machine::expr8 set_sz(typename machine::expr8 val) {
-    m.cc_s(m.uge(val, 0x80));
-    m.cc_z(val == 0);
-    return val;
-  }
-
-  typename machine::expr8 pull() {
-    m.sp(m.sp() + 1);
+  u8 pull() {
+    sp(sp() + 1);
     if (ASSUME_NO_STACK_OVERFLOW) {
-      m.assume(m.sp() != 0);
+      assume(sp() != 0);
     }
-    return m.read(m.from_bytes(0x1, m.sp()));
+    return read(from_bytes(0x1, sp()));
   }
 
-  typename machine::expr8 push(typename machine::expr8 val) {
-    auto addr = m.from_bytes(0x1, m.sp());
-    m.write(addr, val);
-    m.sp(m.sp() - 1);
+  u8 push(u8 val) {
+    auto addr = from_bytes(0x1, sp());
+    write(addr, val);
+    sp(sp() - 1);
     if (ASSUME_NO_STACK_OVERFLOW) {
-      m.assume(m.sp() != 0xFF);
+      assume(sp() != 0xFF);
     }
     return val;
   }
 
-  typename machine::expr8 flags_to_byte() const {
-    return m.ite(m.cc_s(), 0x80, 0x00)
-         | m.ite(m.cc_v(), 0x40, 0x00)
+  u8 flags_to_byte() const {
+    return ite8(cc_s(), (u8)0x80, (u8)0x00)
+         | ite8(cc_v(), (u8)0x40, (u8)0x00)
          | 0x20
-         | m.ite(m.cc_d(), 0x08, 0x00)
-         | m.ite(m.cc_i(), 0x04, 0x00)
-         | m.ite(m.cc_z(), 0x02, 0x00)
-         | m.ite(m.cc_c(), 0x01, 0x00);
+         | ite8(cc_d(), (u8)0x08, (u8)0x00)
+         | ite8(cc_i(), (u8)0x04, (u8)0x00)
+         | ite8(cc_z(), (u8)0x02, (u8)0x00)
+         | ite8(cc_c(), (u8)0x01, (u8)0x00);
   }
 
-  void byte_to_flags(typename machine::expr8 status) {
-    m.cc_s(0x80 == (status & 0x80));
-    m.cc_v(0x40 == (status & 0x40));
-    m.cc_d(0x08 == (status & 0x08));
-    m.cc_i(0x04 == (status & 0x04));
-    m.cc_z(0x02 == (status & 0x02));
-    m.cc_c(0x01 == (status & 0x01));
+  void byte_to_flags(u8 status) {
+    cc_s((status & 0x80) == 0x80);
+    cc_v((status & 0x40) == 0x40);
+    cc_d((status & 0x08) == 0x08);
+    cc_i((status & 0x04) == 0x04);
+    cc_z((status & 0x02) == 0x02);
+    cc_c((status & 0x01) == 0x01);
   }
 
   void run(const instruction ins) {
@@ -851,441 +481,494 @@ struct emulator {
 
     bool is_constant = (uint8_t)(ins.payload_type & instruction_payload_type::CONST_FLAG);
 
-    // Load possible values from the machine
-    const auto absolute_payload = m.absolute(ins.payload, is_constant);
-    const auto zp_payload = m.zp(ins.payload & 0xFF, is_constant);
-    const auto immediate_payload = m.immediate(ins.payload & 0xFF, is_constant);
+    // Get some useful values for the instruction implementations.
+    const u16 absolute_payload = _initial_state.absolute(ins.payload, is_constant);
+    const u8 zp_payload = _initial_state.zp(ins.payload & 0xFF, is_constant);
+    const u8 immediate_payload = _initial_state.immediate(ins.payload & 0xFF, is_constant);
+    const u8 upper_payload = _initial_state.zp(ins.payload >> 8, is_constant);
+    const u8 relative_payload = _initial_state.relative(ins.payload & 0xFF, is_constant);
 
     // The address the instruction is working on
-    auto absolute_var = absolute_payload;
+    u16 absolute_var = absolute_payload;
     // The value the instruction is working on
-    auto immediate_var = immediate_payload;
+    u8 immediate_var = immediate_payload;
 
-    m.pc(m.pc() + instruction_size(ins.payload_type));
+    // Increment the program counter by the instruction size.
+    pc(pc() + instruction_size(ins.payload_type));
 
-    switch(ins.payload_type & ~instruction_payload_type::CONST_FLAG) {
+    // Apply the addressing mode to the instruction payload
+    switch(ins.payload_type) {
     case instruction_payload_type::NONE:
       // nothing to do
       break;
     case instruction_payload_type::RELATIVE:
-      if (m.uge(zp_payload, 0x80)) {
-        absolute_var = m.pc() - 0x100 + m.extend(zp_payload);
-      } else {
-        absolute_var = m.pc() + m.extend(zp_payload);
-      }
+    case instruction_payload_type::RELATIVE_CONST:
+      absolute_var = ite16(
+        relative_payload >= 0x80,
+        pc() - 0x100 + u16(relative_payload),
+        pc() + u16(relative_payload)
+      );
       break;
     case instruction_payload_type::ABSOLUTE:
+    case instruction_payload_type::ABSOLUTE_CONST:
       absolute_var = absolute_payload;
       break;
     case instruction_payload_type::ABSOLUTE_X:
-      absolute_var = absolute_payload + m.extend(m.x());
+    case instruction_payload_type::ABSOLUTE_X_CONST:
+      absolute_var = absolute_payload + u16(x());
       break;
     case instruction_payload_type::ABSOLUTE_Y:
-      absolute_var = absolute_payload + m.extend(m.y());
+    case instruction_payload_type::ABSOLUTE_Y_CONST:
+      absolute_var = absolute_payload + u16(y());
       break;
     case instruction_payload_type::X_INDIRECT:
+    case instruction_payload_type::X_INDIRECT_CONST:
       // lda (addr, x)
-      absolute_var = m.from_bytes(m.read((zp_payload + m.x() + 1) & 0xFF),
-                                m.read((zp_payload + m.x()) & 0xFF));
+      absolute_var = from_bytes(read(u16(u8(zp_payload + x() + 1))),
+                                read(u16(u8(zp_payload + x()))));
       break;
     case instruction_payload_type::INDIRECT_Y:
+    case instruction_payload_type::INDIRECT_Y_CONST:
       // lda (addr), y
-      absolute_var = m.from_bytes(m.read((zp_payload + 1) & 0xFF),
-                                m.read(zp_payload)) + m.extend(m.y());
+      absolute_var = from_bytes(read(u16(u8(zp_payload + 1))),
+                                read(u16(zp_payload))) + u16(y());
       break;
     case instruction_payload_type::ZERO_PAGE:
-      absolute_var = m.extend(zp_payload);
+    case instruction_payload_type::ZERO_PAGE_CONST:
+      absolute_var = u16(zp_payload);
       break;
     case instruction_payload_type::ZERO_PAGE_X:
-      absolute_var = m.extend(zp_payload + m.x());
+    case instruction_payload_type::ZERO_PAGE_X_CONST:
+      absolute_var = u16(u8(zp_payload + x()));
       break;
     case instruction_payload_type::ZERO_PAGE_Y:
-      absolute_var = m.extend(zp_payload + m.y());
+    case instruction_payload_type::ZERO_PAGE_Y_CONST:
+      absolute_var = u16(u8(zp_payload + y()));
       break;
     case instruction_payload_type::IMMEDIATE:
+    case instruction_payload_type::IMMEDIATE_CONST:
       immediate_var = immediate_payload;
       break;
-    case instruction_payload_type::INDIRECT_ABSOLUTE: {
+    case instruction_payload_type::INDIRECT_ABSOLUTE:
+    case instruction_payload_type::INDIRECT_ABSOLUTE_CONST:
+      {
       auto hi = HAS_JUMP_INDIRECT_BUG
         ? (absolute_var & 0xFF00) | ((absolute_var + 1) & 0xFF)
         : absolute_var + 1;
-      absolute_var = m.from_bytes(m.read(hi), m.read(absolute_var));
+      absolute_var = from_bytes(read(hi), read(absolute_var));
       break;
       }
     case instruction_payload_type::X_INDIRECT_ABSOLUTE:
-      absolute_var = m.from_bytes(
-        m.read(absolute_payload + m.extend(m.x()) + 1),
-        m.read(absolute_payload + m.extend(m.x())));
+    case instruction_payload_type::X_INDIRECT_ABSOLUTE_CONST:
+      absolute_var = from_bytes(
+        read(absolute_payload + u16(x()) + 1),
+        read(absolute_payload + u16(x())));
       break;
     case instruction_payload_type::ZERO_PAGE_INDIRECT:
-      absolute_var = m.from_bytes(m.read((zp_payload + 1) & 0xFF),
-                                m.read(zp_payload));
+    case instruction_payload_type::ZERO_PAGE_INDIRECT_CONST:
+      absolute_var = from_bytes(read(u16((zp_payload + 1) & 0xFF)),
+                                read(u16(zp_payload)));
       break;
     case instruction_payload_type::BRANCH_IF_BIT:
-      if (m.uge(zp_payload, 0x80)) {
-        absolute_var = m.pc() - 0x100 + m.extend(zp_payload);
-      } else {
-        absolute_var = m.pc() + m.extend(zp_payload);
-      }
-      immediate_var = m.zp(m.hibyte(absolute_payload), is_constant);
+    case instruction_payload_type::BRANCH_IF_BIT_CONST:
+      absolute_var = ite16(
+        relative_payload >= 0x80,
+        pc() - 0x100 + u16(relative_payload),
+        pc() + u16(relative_payload)
+      );
+      immediate_var = upper_payload;
       break;
-    default:
+    case instruction_payload_type::SOFTWARE_STACK_CONST:
+      absolute_var = u16(_initial_state.software_stack() + x() + (ins.payload & 0xFF));
+      break;
+    case instruction_payload_type::SOFTWARE_STACK_INDIRECT_CONST: {
+      // e.g. lda (stack + payload, x)
+      u8 addr = _initial_state.software_stack() + x() + (ins.payload & 0xFF);
+      absolute_var = from_bytes(read(u16(addr + 1)),
+                                read(u16(addr + x())));
+      break;
+      }
+    case instruction_payload_type::KNOWN_SUBROUTINE_CONST:
+      // e.g. jsr subroutine2
+      absolute_var = _initial_state.known_subroutine(ins.payload);
+      break;
+    case instruction_payload_type::SIZE_2:
+    case instruction_payload_type::SIZE_3:
+    case instruction_payload_type::CONST_FLAG:
       assert(false);
     }
 
     // If we aren't using the immediate operand, then read the address
     // and store it there.
-    if (ins.payload_type != instruction_payload_type::IMMEDIATE && ins.payload_type != instruction_payload_type::IMMEDIATE_CONST) {
-      immediate_var = m.read(absolute_var);
+    if (ins.payload_type != instruction_payload_type::IMMEDIATE
+    && ins.payload_type != instruction_payload_type::IMMEDIATE_CONST
+    && ins.payload_type != instruction_payload_type::BRANCH_IF_BIT
+    && ins.payload_type != instruction_payload_type::BRANCH_IF_BIT_CONST) {
+      immediate_var = read(absolute_var);
     }
 
     switch (ins.name) {
-    case instruction_name::UNKNOWN:
-      exit(0);
-    case instruction_name::NONE:
-      // nothing to do
-      break;
-    case instruction_name::AND:
-      m.a(set_sz(m.a() & immediate_var));
-      break;
-    case instruction_name::ORA:
-      m.a(set_sz(m.a() | immediate_var));
-      break;
-    case instruction_name::EOR: 
-      m.a(set_sz(m.a() ^ immediate_var));
-      break;
-    case instruction_name::LDA:
-      m.a(set_sz(immediate_var));
-      break;
-    case instruction_name::LDX:
-      m.x(set_sz(immediate_var));
-      break;
-    case instruction_name::LDY:
-      m.y(set_sz(immediate_var));
-      break;
-    case instruction_name::TXA:
-      m.a(set_sz(m.x()));
-      break;
-    case instruction_name::TAX:
-      m.x(set_sz(m.a()));
-      break;
-    case instruction_name::TYA:
-      m.a(set_sz(m.y()));
-      break;
-    case instruction_name::TAY:
-      m.y(set_sz(m.a()));
-      break;
-    case instruction_name::INX:
-      m.x(set_sz(m.x() + 1));
-      break;
-    case instruction_name::INY:
-      m.y(set_sz(m.y() + 1));
-      break;
-    case instruction_name::DEX:
-      m.x(set_sz(m.x() - 1));
-      break;
-    case instruction_name::DEY:
-      m.y(set_sz(m.y() - 1));
-      break;
-    case instruction_name::CLC:
-      m.cc_c(false);
-      break;
-    case instruction_name::CLI:
-      m.cc_i(false);
-      break;
-    case instruction_name::CLV:
-      m.cc_v(false);
-      break;
-    case instruction_name::CLD:
-      m.cc_d(false);
-      break;
-    case instruction_name::SEC:
-      m.cc_c(true);
-      break;
-    case instruction_name::SEI:
-      m.cc_i(true);
-      break;
-    case instruction_name::SED:
-      m.cc_d(true);
-      break;
-    case instruction_name::TSX:
-      m.x(set_sz(m.sp()));
-      break;
-    case instruction_name::TXS:
-      m.sp(m.x());
-      break;
+    case instruction_name::UNKNOWN: exit(0xFF); break;
+
+    // These instructions do nothing, or put the processor
+    // in a state that it can't recover from on its own.
+    case instruction_name::STP:
+    case instruction_name::WAI:
     case instruction_name::NOP:
-      // nap.
-      break;
+    case instruction_name::NONE: break;
+
+    case instruction_name::AND: a(set_sz(a() & immediate_var)); break;
+    case instruction_name::ORA: a(set_sz(a() | immediate_var)); break;
+    case instruction_name::EOR: a(set_sz(a() ^ immediate_var)); break;
+    case instruction_name::LDA: a(set_sz(immediate_var)); break;
+    case instruction_name::LDX: x(set_sz(immediate_var)); break;
+    case instruction_name::LDY: y(set_sz(immediate_var)); break;
+    case instruction_name::TXA: a(set_sz(x())); break;
+    case instruction_name::TAX: x(set_sz(a())); break;
+    case instruction_name::TYA: a(set_sz(y())); break;
+    case instruction_name::TAY: y(set_sz(a())); break;
+    case instruction_name::INX: x(set_sz(x() + 1)); break;
+    case instruction_name::INY: y(set_sz(y() + 1)); break;
+    case instruction_name::DEX: x(set_sz(x() - 1)); break;
+    case instruction_name::DEY: y(set_sz(y() - 1)); break;
+    case instruction_name::CLC: cc_c(false); break;
+    case instruction_name::CLI: cc_i(false); break;
+    case instruction_name::CLV: cc_v(false); break;
+    case instruction_name::CLD: cc_d(false); break;
+    case instruction_name::SEC: cc_c(true); break;
+    case instruction_name::SEI: cc_i(true); break;
+    case instruction_name::SED: cc_d(true); break;
+    case instruction_name::TSX: x(set_sz(sp())); break;
+    case instruction_name::TXS: sp(x()); break;
     case instruction_name::INC:
       if (ins.payload_type == instruction_payload_type::NONE) {
-        m.a(set_sz(m.a() + 1));
+        a(set_sz(a() + 1));
       } else {
-        m.write(absolute_var, set_sz(immediate_var + 1));
+        write(absolute_var, set_sz(immediate_var + 1));
       }
       break;
     case instruction_name::DEC:
       if (ins.payload_type == instruction_payload_type::NONE) {
-        m.a(set_sz(m.a() - 1));
+        a(set_sz(a() - 1));
       } else {
-        m.write(absolute_var, set_sz(immediate_var - 1));
+        write(absolute_var, set_sz(immediate_var - 1));
       }
       break;
     case instruction_name::BIT:
-      m.cc_z((immediate_var & m.a()) == 0);
-      m.cc_s((immediate_var & 0x80) == 0x80);
-      m.cc_v((immediate_var & 0x40) == 0x40);
+      cc_z((immediate_var & a()) == 0);
+      cc_s((immediate_var & 0x80) == 0x80);
+      cc_v((immediate_var & 0x40) == 0x40);
       break;
     case instruction_name::ASL:
       if (ins.payload_type == instruction_payload_type::NONE) {
-        m.cc_c((m.a() & 0x80) == 0x80);
-        m.a(set_sz(m.shl(m.a())));
+        cc_c((a() & 0x80) == 0x80);
+        a(set_sz(a() << 1));
       } else {
-        m.cc_c((immediate_var & 0x80) == 0x80);
-        m.write(absolute_var, set_sz(m.shl(immediate_var)));
+        cc_c((immediate_var & 0x80) == 0x80);
+        write(absolute_var, set_sz(immediate_var << 1));
       }
       break;
     case instruction_name::ROL:
       if (ins.payload_type == instruction_payload_type::NONE) {
-        auto val = m.shl(m.a()) | m.ite(m.cc_c(), 1, 0);
-        m.cc_c((m.a() & 0x80) == 0x80);
-        m.a(set_sz(val));
+        auto val = (a() << 1) | (u8)cc_c();
+        cc_c((a() & 0x80) == 0x80);
+        a(set_sz(val));
       } else {
-        auto val = m.shl(immediate_var) | m.ite(m.cc_c(), 1, 0);
-        m.cc_c((immediate_var & 0x80) == 0x80);
-        m.write(absolute_var, set_sz(val));
+        auto val = (immediate_var << 1) | (u8)cc_c();
+        cc_c((immediate_var & 0x80) == 0x80);
+        write(absolute_var, set_sz(val));
       }
       break;
     case instruction_name::LSR:
       if (ins.payload_type == instruction_payload_type::NONE) {
-        m.cc_c((m.a() & 0x01) == 0x01);
-        m.a(set_sz(m.shr(m.a())));
+        cc_c((a() & 0x01) == 0x01);
+        a(set_sz(a() >> 1));
       } else {
-        m.cc_c((immediate_var & 0x01) == 0x01);
-        m.write(absolute_var, set_sz(m.shr(immediate_var)));
+        cc_c((immediate_var & 0x01) == 0x01);
+        write(absolute_var, set_sz(immediate_var >> 1));
       }
       break;
     case instruction_name::ROR:
       if (ins.payload_type == instruction_payload_type::NONE) {
-        auto val = m.shr(m.a()) | m.ite(m.cc_c(), 0x80, 0x00);
-        m.cc_c((m.a() & 0x01) == 0x01);
-        m.a(set_sz(val));
+        auto val = (a() >> 1) | ite8(cc_c(), (u8)0x80, (u8)0x00);
+        cc_c((a() & 0x01) == 0x01);
+        a(set_sz(val));
       } else {
-        auto val = m.shr(immediate_var) | m.ite(m.cc_c(), 0x80, 0x00);
-        m.cc_c((immediate_var & 0x01) == 0x01);
-        m.write(absolute_var, set_sz(val));
+        auto val = (immediate_var >> 1) | ite8(cc_c(), (u8)0x80, (u8)0x00);
+        cc_c((immediate_var & 0x01) == 0x01);
+        write(absolute_var, set_sz(val));
       }
       break;
-    case instruction_name::STZ:
-      m.write(absolute_var, 0);
-    case instruction_name::STA:
-      m.write(absolute_var, m.a());
-      break;
-    case instruction_name::STX:
-      m.write(absolute_var, m.x());
-      break;
-    case instruction_name::STY:
-      m.write(absolute_var, m.y());
-      break;
-    case instruction_name::PLA:
-      m.a(set_sz(pull()));
-      break;
-    case instruction_name::PHA:
-      push(m.a());
-      break;
-    case instruction_name::PLX:
-      m.x(set_sz(pull()));
-      break;
-    case instruction_name::PHX:
-      push(m.x());
-      break;
-    case instruction_name::PLY:
-      m.y(set_sz(pull()));
-      break;
-    case instruction_name::PHY:
-      push(m.y());
-      break;
-    case instruction_name::PHP: {
-      push(flags_to_byte() | 0x10);
-      break;
-      }
-    case instruction_name::PLP: {
-      byte_to_flags(pull());
-      break;
-      }
-    case instruction_name::SBC:
-      immediate_var = immediate_var ^ 0xFF;
-      /* fallthrough */
-    case instruction_name::ADC: {
-      auto carry = m.ite(m.cc_c(), 0x01, 0x00);
-
+    case instruction_name::STZ: write(absolute_var, 0); break;
+    case instruction_name::STA: write(absolute_var, a()); break;
+    case instruction_name::STX: write(absolute_var, x()); break;
+    case instruction_name::STY: write(absolute_var, y()); break;
+    case instruction_name::PLA: a(set_sz(pull())); break;
+    case instruction_name::PHA: push(a()); break;
+    case instruction_name::PLX: x(set_sz(pull())); break;
+    case instruction_name::PHX: push(x()); break;
+    case instruction_name::PLY: y(set_sz(pull())); break;
+    case instruction_name::PHY: push(y()); break;
+    case instruction_name::PHP: push(flags_to_byte() | 0x10); break;
+    case instruction_name::PLP: byte_to_flags(pull()); break;
+    case instruction_name::SBC: {
       if (DECIMAL_ENABLED) {
-        auto sumIfDecimal =  (m.a() & 0xF) + (immediate_var & 0xF) + carry;
-        sumIfDecimal = m.ite(m.ugt(sumIfDecimal, 0x09), sumIfDecimal + 0x6, sumIfDecimal);
-        sumIfDecimal = (m.a() & 0xF0) + (immediate_var & 0xF0) + m.ite(m.ugt(sumIfDecimal, 0x0F), 0x10, 0) + (sumIfDecimal & 0x0F);
+        if (ASSUME_VALID_BCD) {
+          // Each nybble of both operands must be 0-9
+          // for a valid BCD result.
+          assume(
+            !cc_d() || (
+              (a() & 0xF) < 0xA
+              && (a() & 0xF0) < 0xA0
+              && (immediate_var & 0xF) < 0xA
+              && (immediate_var & 0xF0) < 0xA0));
+        }
+      
+        if (USE_65c02_DECIMAL) {
+          // 65c02 decimal mode uses an extra cycle to
+          // ensure the flags are more meaningful, and it
+          // has different behavior for invalid decimal operands.
 
-        auto sumIfBinary = m.extend(immediate_var) + m.extend(m.a()) + m.extend(carry);
+          u16 src = (u16)immediate_var;
+          u16 bdiff = u16(a()) - src + u16(cc_c()) - 1;
+          cc_v(((a() ^ lobyte(bdiff)) & (a() ^ immediate_var) & 0x80) == 0x80);
 
-        auto sum = m.ite(m.cc_d(), sumIfDecimal, sumIfBinary);
-        m.cc_v(0x80 == (0x80 & (m.lobyte(sum) ^ m.a()) & (m.lobyte(sum) ^ immediate_var)));
-        sum = sum + m.ite(m.cc_d() && m.uge(sum, 0xA0), 0x60, 0);
-        m.cc_c(m.hibyte(sum) != 0x00);
-        m.a(set_sz(m.lobyte(sum)));
+          u16 ddiff = bdiff;
+          ddiff = ddiff - ite16(ddiff > 0xFF, (u16)0x60, (u16)0);
+          u16 tmp2 = u16(a() & 0xF) - (src & 0xF) + u16(cc_c()) - 1;
+          ddiff = ddiff - ite16(tmp2 > 0xFF, (u16)6, (u16)0);
+
+          u16 diff = ite16(cc_d(), ddiff, bdiff);
+          cc_c(u16(a()) + u16(cc_c()) - 1 >= src);
+          a(set_sz(lobyte(diff)));
+        } else {
+            // Difference if decimal
+            u16 ddiff = u16(a() & 0xf) - u16(immediate_var & 0xf) - u16(!cc_c()); 
+            ddiff = ite16(
+              (ddiff & 0x10) == 0x10,
+              ((ddiff - 6) & 0xF) | ((u16(a()) & 0xF0) - (u16(immediate_var) & 0xF0) - 0x10),
+              (ddiff & 0xF) | ((u16(a()) & 0xF0) - (u16(immediate_var) & 0xF0))
+            );
+
+            ddiff = ddiff - ite16((ddiff & 0x100) == 0x100, u16(0x60), u16(0));                
+
+            // Difference if binary
+            u16 bdiff = u16(a()) - (u16)immediate_var - u16(!cc_c());
+
+            // TODO: this matches VICE, but are the flags really just based
+            // on the binary difference?
+            cc_c(bdiff < 0x100);
+            set_sz(lobyte(bdiff));
+            cc_v(((a() ^ lobyte(bdiff)) & (a() ^ immediate_var) & 0x80) == 0x80);
+
+            u16 diff = ite16(cc_d(), ddiff, bdiff);
+            a(lobyte(diff));
+        }
       } else {
-        auto sum = m.extend(immediate_var) + m.extend(m.a()) + m.extend(carry);
+        u16 diff = u16(a()) - (u16)immediate_var - u16(!cc_c());
+        cc_v(((lobyte(diff) ^ a()) & (a() ^ immediate_var) & 0x80) == 0x80);
+        cc_c(diff < 0x100);
+        a(set_sz(lobyte(diff)));
+      }
 
-        m.cc_v(0x80 == (0x80 & (m.lobyte(sum) ^ m.a()) & (m.lobyte(sum) ^ immediate_var)));
-        m.cc_c(m.hibyte(sum) == 0x01);
-        m.a(set_sz(m.lobyte(sum)));        m.a(set_sz(m.lobyte(sum)));
+      break;
+      }
+    case instruction_name::ADC: {
+      if (DECIMAL_ENABLED) {
+        if (ASSUME_VALID_BCD) {
+          // Each nybble of both operands must be 0-9
+          // for a valid BCD result.
+          assume(
+            !cc_d() || (
+              (a() & 0xF) < 0xA
+              && (a() & 0xF0) < 0xA0
+              && (immediate_var & 0xF) < 0xA
+              && (immediate_var & 0xF0) < 0xA0));
+        }
 
+        if (USE_65c02_DECIMAL) {
+          // 65c02 decimal mode uses an extra cycle to
+          // ensure the flags are more meaningful, and it
+          // has different behavior for invalid decimal operands.
+          
+          // Sum if decimal mode
+          u16 dsumlo = u16((a() & 0xF) + (immediate_var & 0xF) + (u8)cc_c());
+          u16 dsumhi = u16((a() & 0xF0) + (immediate_var & 0xF0));
+          boolean t = dsumlo > 9;
+          dsumlo = dsumlo + ite16(t, (u16)6, (u16)0);
+          dsumhi = dsumhi + ite16(t, (u16)0x10, (u16)0);
+
+          // Sum if binary mode
+          u16 bsum = u16(immediate_var) + u16(a()) + u16(cc_c());
+
+          u16 sum = ite16(cc_d(), dsumhi, bsum);
+          cc_v(((a() ^ lobyte(sum)) & (a() ^ immediate_var) & 0x80) == 0x80);
+          dsumhi = dsumhi + ite16(dsumhi > 0x90, (u16)0x60, (u16)0);
+          
+          sum = ite16(cc_d(), dsumhi, bsum);
+          cc_c(sum > 0xFF);
+          
+          u16 dsum = (dsumlo & 0xF) + (dsumhi & 0xF0);
+          sum = ite16(cc_d(), dsum, bsum);
+          a(set_sz(lobyte(sum)));
+        } else {
+          // Sum if decimal mode
+          u16 dsum = u16((a() & 0xF) + (immediate_var & 0xF) + (u8)cc_c());
+          dsum = dsum + ite16(dsum > 0x9, (u16)6, (u16)0);
+          dsum = (dsum & 0xF) + u16(a() & 0xF0) + u16(immediate_var & 0xF0) + ite16(dsum > 0xF, (u16)0x10, (u16)0);
+
+          // Sum if binary mode
+          u16 bsum = u16(immediate_var) + u16(a()) + u16(cc_c());
+
+          u16 sum = ite16(cc_d(), dsum, bsum);
+
+          cc_z(lobyte(bsum) == 0); // Zero flag is always based on binary sum
+          cc_s((sum & 0x80) == 0x80);
+          cc_v(((lobyte(sum) ^ a()) & (lobyte(sum) ^ immediate_var) & 0x80) == 0x80);
+
+          // Perform wrap around if greater than 99
+          dsum = dsum + ite16((dsum & 0x1F0) > 0x90, (u16)0x60, (u16)0);
+
+          sum = ite16(cc_d(), dsum, bsum);
+          cc_c(sum > 0xFF);
+          a(lobyte(sum));
+        }
+      } else {
+        auto carry = u16(cc_c());
+        auto sum = u16(immediate_var) + u16(a()) + u16(carry);
+
+        cc_v(((lobyte(sum) ^ a()) & (lobyte(sum) ^ immediate_var) & 0x80) == 0x80);
+        cc_c(sum > 0xFF);
+        a(set_sz(lobyte(sum)));
       }
       
       break;
       }
     case instruction_name::CMP:
-      m.cc_c(m.uge(m.a(), immediate_var));
-      m.cc_s(m.uge(m.a() - immediate_var, 0x80));
-      m.cc_z(m.a() == immediate_var);
+      cc_c(a() >= immediate_var);
+      cc_s(u8(a() - immediate_var) >= 0x80);
+      cc_z(a() == immediate_var);
       break;
     case instruction_name::CPX:
-      m.cc_c(m.uge(m.x(), immediate_var));
-      m.cc_s(m.uge(m.x() - immediate_var, 0x80));
-      m.cc_z(m.x() == immediate_var);
+      cc_c(x() >= immediate_var);
+      cc_s(u8(x() - immediate_var) >= 0x80);
+      cc_z(x() == immediate_var);
       break;
     case instruction_name::CPY:
-      m.cc_c(m.uge(m.y(), immediate_var));
-      m.cc_s(m.uge(m.y() - immediate_var, 0x80));
-      m.cc_z(m.y() == immediate_var);
+      cc_c(y() >= immediate_var);
+      cc_s(u8(y() - immediate_var) >= 0x80);
+      cc_z(y() == immediate_var);
       break;
-    case instruction_name::JMP:
-      m.exit(absolute_var);
-      break;
+    case instruction_name::JMP: exit(absolute_var); break;
     case instruction_name::RTI: {
       byte_to_flags(pull());
-      auto lo = pull();
-      auto hi = pull();
-      m.exit(m.from_bytes(hi, lo));
+      u8 lo = pull();
+      u8 hi = pull();
+      exit(from_bytes(hi, lo));
       break;
       }
     case instruction_name::RTS: {
-      auto lo = pull();
-      auto hi = pull();
-      m.exit(m.from_bytes(hi, lo) + 1);
+      u8 lo = pull();
+      u8 hi = pull();
+      exit(from_bytes(hi, lo) + 1);
       break;
       }
-    case instruction_name::BPL:
-      m.exit_if(!m.cc_s(), absolute_var);
-      break;
-    case instruction_name::BMI:
-      m.exit_if(m.cc_s(), absolute_var);
-      break;
-    case instruction_name::BVS:
-      m.exit_if(m.cc_v(), absolute_var);
-      break;
-    case instruction_name::BVC:
-      m.exit_if(!m.cc_v(), absolute_var);
-      break;
-    case instruction_name::BCC:
-      m.exit_if(!m.cc_c(), absolute_var);
-      break;
-    case instruction_name::BCS:
-      m.exit_if(m.cc_c(), absolute_var);
-      break;
-    case instruction_name::BEQ:
-      m.exit_if(m.cc_z(), absolute_var);
-      break;
-    case instruction_name::BNE:
-      m.exit_if(!m.cc_z(), absolute_var);
-      break;
+    case instruction_name::BPL: exit_if(!cc_s(), absolute_var); break;
+    case instruction_name::BMI: exit_if(cc_s(),  absolute_var); break;
+    case instruction_name::BVS: exit_if(cc_v(),  absolute_var); break;
+    case instruction_name::BVC: exit_if(!cc_v(), absolute_var); break;
+    case instruction_name::BCC: exit_if(!cc_c(), absolute_var); break;
+    case instruction_name::BCS: exit_if(cc_c(),  absolute_var); break;
+    case instruction_name::BEQ: exit_if(cc_z(),  absolute_var); break;
+    case instruction_name::BNE: exit_if(!cc_z(), absolute_var); break;
     case instruction_name::JSR:
-      push(m.hibyte(m.pc() - 1));
-      push(m.lobyte(m.pc() - 1));
-      m.exit(absolute_var);
+      push(hibyte(pc() - 1));
+      push(lobyte(pc() - 1));
+      // TODO: handle known subroutines
+      exit(absolute_var);
       break;
     case instruction_name::BRK:
-      push(m.hibyte(m.pc() + 1));
-      push(m.lobyte(m.pc() + 1));
+      push(hibyte(pc() + 1));
+      push(lobyte(pc() + 1));
       push(flags_to_byte() | 0x10);
-      m.cc_i(true);
-      m.exit(m.from_bytes(m.read(0xFFFF), m.read(0xFFFE)));
+      cc_i(true);
+      exit(from_bytes(read(0xFFFF), read(0xFFFE)));
       break;
     case instruction_name::LAX:
-      m.a(set_sz(immediate_var));
-      m.x(m.a());
+      a(set_sz(immediate_var));
+      x(a());
       break;
-    case instruction_name::SAX:
-      m.write(absolute_var, m.a() & m.x());
-      break;
+    case instruction_name::SAX: write(absolute_var, a() & x()); break;
     case instruction_name::DCM:
       immediate_var = immediate_var - 1;
-      m.write(absolute_var, set_sz(immediate_var));
-      m.cc_c(m.uge(m.a(), immediate_var));
-      m.cc_s(m.uge(m.a() - immediate_var, 0x80));
-      m.cc_z(m.a() == immediate_var);
+      write(absolute_var, set_sz(immediate_var));
+      cc_c(a() >= immediate_var);
+      cc_s(a() - immediate_var >= 0x80);
+      cc_z(a() == immediate_var);
       break;
     case instruction_name::INS: {
       immediate_var = immediate_var + 1;
-      m.write(absolute_var, set_sz(immediate_var));
+      write(absolute_var, set_sz(immediate_var));
       immediate_var = immediate_var ^ 0xFF;
-      auto sum = m.extend(immediate_var) + m.extend(m.a()) + m.extend(m.ite(m.cc_c(), 0x01, 0x00));
-      m.cc_v(0x80 == (0x80 & (m.lobyte(sum) ^ m.a()) & (m.lobyte(sum) ^ immediate_var)));
-      m.cc_c(m.hibyte(sum) == 0x01);
-      m.a(set_sz(m.lobyte(sum)));
+      auto sum = u16(immediate_var) + u16(a()) + u16(cc_c());
+      cc_v(((lobyte(sum) ^ a()) & (lobyte(sum) ^ immediate_var) & 0x80) == 0x80);
+      cc_c(hibyte(sum) == 0x01);
+      a(set_sz(lobyte(sum)));
       break;
       }
     case instruction_name::SLO:
-      m.cc_c((immediate_var & 0x80) == 0x80);
-      immediate_var = m.shl(immediate_var);
-      m.write(absolute_var, set_sz(immediate_var));
-      m.a(set_sz(m.a() | immediate_var));
+      cc_c((immediate_var & 0x80) == 0x80);
+      immediate_var = immediate_var << 1;
+      write(absolute_var, set_sz(immediate_var));
+      a(set_sz(a() | immediate_var));
       break;
     case instruction_name::RLA: {
-      auto val = m.shl(immediate_var) | m.ite(m.cc_c(), 1, 0);
-      m.cc_c((immediate_var & 0x80) == 0x80);
-      m.write(absolute_var, set_sz(val));
-      m.a(set_sz(val & m.a()));
+      auto val = (immediate_var << 1) | ite8(cc_c(), (u8)1, (u8)0);
+      cc_c((immediate_var & 0x80) == 0x80);
+      write(absolute_var, set_sz(val));
+      a(set_sz(val & a()));
       break;
       }
     case instruction_name::SRE:
-      m.cc_c((immediate_var & 0x01) == 0x01);
-      immediate_var = m.shr(immediate_var);
-      m.write(absolute_var, set_sz(immediate_var));
-      m.a(set_sz(m.a() ^ immediate_var));
+      cc_c((immediate_var & 0x01) == 0x01);
+      immediate_var = immediate_var >> 1;
+      write(absolute_var, set_sz(immediate_var));
+      a(set_sz(a() ^ immediate_var));
       break;
     case instruction_name::RRA: {
-      auto val = m.shr(immediate_var) | m.ite(m.cc_c(), 0x80, 0x00);
-      m.cc_c((immediate_var & 0x01) == 0x01);
-      m.write(absolute_var, set_sz(val));
-      auto sum = m.extend(val) + m.extend(m.a()) + m.extend(m.ite(m.cc_c(), 0x01, 0x00));
-      m.cc_v(0x80 == (0x80 & (m.lobyte(sum) ^ m.a()) & (m.lobyte(sum) ^ val)));
-      m.cc_c(m.hibyte(sum) == 0x01);
-      m.a(set_sz(m.lobyte(sum)));
+      auto val = (immediate_var >> 1) | ite8(cc_c(), (u8)0x80, (u8)0x00);
+      cc_c((immediate_var & 0x01) == 0x01);
+      write(absolute_var, set_sz(val));
+      auto sum = u16(val) + u16(a()) + ite16(cc_c(), (u16)0x01, (u16)0x00);
+      cc_v(((lobyte(sum) ^ a()) & (lobyte(sum) ^ val) & 0x80) == 0x80);
+      cc_c(hibyte(sum) == 0x01);
+      a(set_sz(lobyte(sum)));
       break;
       }
     case instruction_name::ALR: {
-      auto val = m.shr(m.a() & immediate_var);
-      m.cc_c((m.a() & immediate_var & 0x01) == 0x01);
-      m.a(set_sz(val));
+      auto val = (a() & immediate_var) >> 1;
+      cc_c((a() & immediate_var & 0x01) == 0x01);
+      a(set_sz(val));
       break;
       }
     case instruction_name::ANC:
-      m.a(set_sz(m.a() & immediate_var));
-      m.cc_c(m.cc_s());
+      a(set_sz(a() & immediate_var));
+      cc_c(cc_s());
       break;
     case instruction_name::ARR: {
-      m.a(set_sz(m.a() & immediate_var));
-      auto val = m.shr(m.a()) | m.ite(m.cc_c(), 0x80, 0x00);
-      m.cc_c((val & 0x40) == 0x40);
+      a(set_sz(a() & immediate_var));
+      auto val = (a() >> 1) | ite8(cc_c(), (u8)0x80, (u8)0x00);
+      cc_c((val & 0x40) == 0x40);
       auto bit6 = (val & 0x40) == 0x40;
       auto bit5 = (val & 0x20) == 0x20;
-      m.cc_v(bit6 ^ bit5);
-      m.a(set_sz(val));
+      cc_v(bit6 ^ bit5);
+      a(set_sz(val));
       break;
       }
     case instruction_name::AXS: {
-      auto xa = m.x() & m.a();
-      m.x(set_sz(xa - immediate_var));
-      m.cc_c(m.uge(xa, immediate_var));
+      auto xa = x() & a();
+      x(set_sz(xa - immediate_var));
+      cc_c(xa >= immediate_var);
       break;
       }
     case instruction_name::RMB0:
@@ -1298,7 +981,7 @@ struct emulator {
     case instruction_name::RMB7: {
       uint8_t bit = (uint8_t)ins.name - (uint8_t)instruction_name::RMB0;
       uint8_t mask = (~(1 << bit)) & 0xFF;
-      m.write(absolute_var, immediate_var & mask);
+      write(absolute_var, immediate_var & mask);
       break;
       }
     case instruction_name::SMB0:
@@ -1310,7 +993,7 @@ struct emulator {
     case instruction_name::SMB6:
     case instruction_name::SMB7: {
       uint8_t bit = (uint8_t)ins.name - (uint8_t)instruction_name::RMB0;
-      m.write(absolute_var, immediate_var | (1 << bit));
+      write(absolute_var, immediate_var | (1 << bit));
       break;
       }
     case instruction_name::BBR0:
@@ -1322,7 +1005,7 @@ struct emulator {
     case instruction_name::BBR6:
     case instruction_name::BBR7: {
       uint8_t bit = (uint8_t)ins.name - (uint8_t)instruction_name::BBR0;
-      m.exit_if((immediate_var & (1 << bit)) == 0, absolute_var);
+      exit_if((immediate_var & (1 << bit)) == 0, absolute_var);
       break;
       }
     case instruction_name::BBS0:
@@ -1334,27 +1017,26 @@ struct emulator {
     case instruction_name::BBS6:
     case instruction_name::BBS7: {
       uint8_t bit = (uint8_t)ins.name - (uint8_t)instruction_name::BBS0;
-      m.exit_if((immediate_var & (1 << bit)) != 0, absolute_var);
+      exit_if((immediate_var & (1 << bit)) != 0, absolute_var);
       break;
       }
     case instruction_name::TRB: {
-      m.cc_z((immediate_var & m.a()) == 0);
-      m.write(absolute_var, immediate_var & ~m.a());
+      cc_z((immediate_var & a()) == 0);
+      write(absolute_var, immediate_var & ~a());
       break;
       }
     case instruction_name::TSB: {
-      m.cc_z((immediate_var & m.a()) == 0);
-      m.write(absolute_var, immediate_var | m.a());
+      cc_z((immediate_var & a()) == 0);
+      write(absolute_var, immediate_var | a());
       break;
       }
-    case instruction_name::STP:
-    case instruction_name::WAI:
-      // TODO: What to do here? These shouldn't be included
-      // in optimization anyway.
-      break;
     }
   }
 };
+
+typedef machine<zuint8_t, zuint16_t, zbool, zmemory, z_initial_state> zmachine;
+typedef machine<nuint8_t, nuint16_t, bool, hmemory, hash_initial_state> hmachine;
+typedef machine<nuint8_t, nuint16_t, bool, cmemory, concrete_initial_state> cmachine;
 
 uint16_t read16(const uint8_t memory[256*256], const uint16_t ip) {
   return memory[ip + 1] | (memory[ip + 2] << 8);
@@ -1650,19 +1332,14 @@ instruction decode(const uint8_t memory[256*256], const uint16_t pc) {
 #undef DR
 
 int compare_abstract_and_concrete(char *rom) {
-  std::cout << "Sizes: a:" << (sizeof(abstract_machine)) << std::endl << "c: " << (sizeof(concrete_machine)) << std::endl;
-
   try {
     char header[0x10];
     char *prg;
     char *chr;
     uint8_t memory[0x10000];
 
-    prover_context prover_ctx;
-
-    z3::context &ctx = prover_ctx.context;
-    concrete_machine c_machine(0, memory);
-    emulator<concrete_machine> c_emulator(c_machine);
+    concrete_initial_state c_state(memory);
+    cmachine c_machine(c_state);
 
     std::ifstream input(rom, std::ios::in | std::ios::binary);
     printf("Loading file %s\n", rom);
@@ -1683,34 +1360,35 @@ int compare_abstract_and_concrete(char *rom) {
       }
     }
 
-    c_machine.pc(c_machine.from_bytes(memory[0xFFFD], memory[0xFFFC]));
-    printf("pc:%04X\n", c_machine.pc());
+    c_machine.pc(0xC000);
+    c_machine.byte_to_flags(0x24);
+    c_machine.sp(0xFD);
+    printf("pc:%04X\n", c_machine.pc().val);
 
     std::string status;
 
     uint64_t instructions = 0;
     while (instructions < 0x10000 || memory[0x6000] == 0x80) {
-      instruction ins = decode(memory, c_machine.pc());
+      instruction ins = decode(memory, c_machine.pc().val);
 
       instructions++;
       
-      
-      printf("%04X  ", c_machine.pc());
+      printf("%04X  ", c_machine.pc().val);
 
       int i = 0, size = instruction_size(ins.payload_type);
       for (; i < size; i++) {
-        printf("%02X ", memory[c_machine.pc() + i]);
+        printf("%02X ", memory[(c_machine.pc() + i).val]);
       }
       for (; i < 3; i++) {
         printf("   ");
       }
 
       printf(" A:%02X X:%02X Y:%02X P:%02X SP:%02X\n",
-        c_machine.a(),
-        c_machine.x(),
-        c_machine.y(),
-        c_emulator.flags_to_byte(),
-        c_machine.sp());
+        c_machine.a().val,
+        c_machine.x().val,
+        c_machine.y().val,
+        c_machine.flags_to_byte().val,
+        c_machine.sp().val);
 
       if (memory[0x6004] != 0) {
         std::string new_status((char *)(memory + 0x6004));
@@ -1721,42 +1399,44 @@ int compare_abstract_and_concrete(char *rom) {
       }
 
       {
-        c_machine.reset_early_exit();
-        c_machine._n_read = 0;
-        c_machine._n_written = 0;
+        c_machine.reset_exit();
         // Create an abstract machine copying the current state
-        abstract_machine a_machine(prover_ctx, c_machine);
+        z_initial_state z_state;
+        zmachine z_machine(z_state);
+        z_machine.copy_from(c_machine);
+
         // Save the original memory state
-        auto original_memory = a_machine.memory();
-        emulator<abstract_machine> a_emulator(a_machine);
+        auto original_memory = z_machine._memory.val;
         // Run the instruction on both machines
-        c_emulator.run(ins);
-        a_emulator.run(ins);
-        //a_machine.simplify();
-        z3::solver solver(ctx);
+        c_machine.run(ins);
+        z_machine.run(ins);
+        z3::solver solver(z3_ctx);
         // Add assertions for the memory locations which were read.
-        for (int i = 0; i < c_machine._n_read; i++) {
-          auto equal = z3::select(original_memory, c_machine._addresses_read[i]) == c_machine._values_read[i];
-          solver.add(equal);
+        for (int i = 0; i < c_machine._memory.n_read; i++) {
+          auto equal = z3::select(original_memory, c_machine._memory.addresses_read[i].val) == c_machine._memory.values_read[i].val;
+          add_assertion(solver, equal);
         }
 
         // And for the memory locations which were written.
-        for (int i = 0; i < c_machine._n_written; i++) {
-          solver.add(a_machine.read(c_machine._addresses_written[i]) == c_machine._values_written[i]);
+        for (int i = 0; i < c_machine._memory.n_written; i++) {
+          add_assertion(solver, z_machine.read(c_machine._memory.addresses_written[i].val) == c_machine._memory.values_written[i].val);
         }
 
-        solver.add(a_machine.a() == c_machine.a());
-        solver.add(a_machine.x() == c_machine.x());
-        solver.add(a_machine.y() == c_machine.y());
-        solver.add(a_machine.sp() == c_machine.sp());
-        if (c_machine.cc_s()) { solver.add(a_machine.cc_s()); } else { solver.add(!a_machine.cc_s()); }
-        if (c_machine.cc_v()) { solver.add(a_machine.cc_v()); } else { solver.add(!a_machine.cc_v()); }
-        if (c_machine.cc_i()) { solver.add(a_machine.cc_i()); } else { solver.add(!a_machine.cc_i()); }
-        if (c_machine.cc_d()) { solver.add(a_machine.cc_d()); } else { solver.add(!a_machine.cc_d()); }
-        if (c_machine.cc_c()) { solver.add(a_machine.cc_c()); } else { solver.add(!a_machine.cc_c()); }
-        if (c_machine.cc_z()) { solver.add(a_machine.cc_z()); } else { solver.add(!a_machine.cc_z()); }
-        solver.add(a_machine.pc() == c_machine.pc());
-        if (c_machine.exited_early()) { solver.add(a_machine.exited_early()); } else { solver.add(!a_machine.exited_early()); }
+        c_machine._memory.n_read = 0;
+        c_machine._memory.n_written = 0;
+
+        add_assertion(solver, z_machine.a() == c_machine.a().val);
+        add_assertion(solver, z_machine.x() == c_machine.x().val);
+        add_assertion(solver, z_machine.y() == c_machine.y().val);
+        add_assertion(solver, z_machine.sp() == c_machine.sp().val);
+        add_assertion(solver, z_machine.cc_s() == c_machine.cc_s());
+        add_assertion(solver, z_machine.cc_v() == c_machine.cc_v());
+        add_assertion(solver, z_machine.cc_i() == c_machine.cc_i());
+        add_assertion(solver, z_machine.cc_d() == c_machine.cc_d());
+        add_assertion(solver, z_machine.cc_c() == c_machine.cc_c());
+        add_assertion(solver, z_machine.cc_z() == c_machine.cc_z());
+        add_assertion(solver, z_machine.pc() == c_machine.pc().val);
+        add_assertion(solver, z_machine._has_exited == c_machine._has_exited);
 
         auto result = solver.check();
         if (result == z3::unsat) {
@@ -1792,9 +1472,9 @@ int nes_test(char *rom) {
     char *chr;
     uint8_t memory[0x10000];
 
-    concrete_machine c_machine(0, memory);
-    c_machine.record_memory(false);
-    emulator<concrete_machine> c_emulator(c_machine);
+    concrete_initial_state c_state(memory);
+    c_state._memory.record_memory = false;
+    cmachine c_machine(c_state);
 
     std::ifstream input(rom, std::ios::in | std::ios::binary);
     printf("Loading file %s\n", rom);
@@ -1816,33 +1496,35 @@ int nes_test(char *rom) {
     }
 
     c_machine.pc(0xC000);
-    printf("pc:%04X\n", c_machine.pc());
+    c_machine.byte_to_flags(0x24);
+    c_machine.sp(0xFD);
+    printf("pc:%04X\n", c_machine.pc().val);
 
     std::string status;
 
     uint64_t instructions = 0;
     while (c_machine.pc() != 1) {
-      instruction ins = decode(memory, c_machine.pc());
+      instruction ins = decode(memory, c_machine.pc().val);
 
       instructions++;
 
-      printf("%04X  ", c_machine.pc());
+      printf("%04X  ", c_machine.pc().val);
       int i = 0, size = instruction_size(ins.payload_type);
       for (; i < size; i++) {
-        printf("%02X ", memory[c_machine.pc() + i]);
+        printf("%02X ", memory[(c_machine.pc() + i).val]);
       }
       for (; i < 3; i++) {
         printf("   ");
       }
       printf(" A:%02X X:%02X Y:%02X P:%02X SP:%02X\n",
-        c_machine.a(),
-        c_machine.x(),
-        c_machine.y(),
-        c_emulator.flags_to_byte(),
-        c_machine.sp());
+        c_machine.a().val,
+        c_machine.x().val,
+        c_machine.y().val,
+        c_machine.flags_to_byte().val,
+        c_machine.sp().val);
 
-      c_machine.reset_early_exit();
-      c_emulator.run(ins);
+      c_machine.reset_exit();
+      c_machine.run(ins);
     }
 
   } catch(z3::exception& e) {
@@ -1852,7 +1534,19 @@ int nes_test(char *rom) {
 }
 
 int main(int argc, char **argv) {
-  sample();
+  instruction ins(instruction_name::INX, instruction_payload_type::NONE, 0);
+  z_initial_state z_state;
+  zmachine z(z_state);
+  z.run(ins);
+  hash_initial_state h_state(1234);
+  hmachine h(h_state);
+  h.run(ins);
+
+  uint8_t memory[65536];
+  concrete_initial_state c_state(memory);
+  cmachine c(c_state);
+  c.run(ins);
+
   if (argv[1] == std::string("test")) {
     return compare_abstract_and_concrete(argv[2]);
   } else if (argv[1] == std::string("nestest")) {

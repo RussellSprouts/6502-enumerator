@@ -3,15 +3,21 @@
 #include "z3++.h"
 #include "zstdint.h"
 #include "nstdint.h"
+#include "special_immediate.h"
 
 struct z_initial_state {
   std::vector<zuint16_t> absolute_vars;
   std::vector<zuint8_t> immediate_vars;
   std::vector<zuint8_t> zp_vars;
   std::vector<zuint8_t> relative_vars;
+  std::vector<zuint8_t> stack_offset_vars;
   z3::expr _software_stack;
+  z3::expr _temp;
 
-  z_initial_state() : _software_stack(z3_ctx.bv_const("stack", 8)) {
+  z_initial_state() :
+    _software_stack(z3_ctx.bv_const("stack", 8)),
+    _temp(z3_ctx.bv_const("temp", 8))
+  {
     std::string absolute_name("absolute");
     for (int i = 0; i < 16; i++) {
       absolute_vars.push_back(z3_ctx.bv_const((absolute_name + std::to_string(i)).c_str(), 16));
@@ -30,6 +36,11 @@ struct z_initial_state {
     std::string relative_name("relative");
     for (int i = 0; i < 16; i++) {
       relative_vars.push_back(z3_ctx.bv_const((relative_name + std::to_string(i)).c_str(), 8));
+    }
+
+    std::string stack_offset_name("offset");
+    for (int i = 0; i < 16; i++) {
+      stack_offset_vars.push_back(z3_ctx.bv_const((stack_offset_name + std::to_string(i)).c_str(), 8));
     }
   }
 
@@ -94,8 +105,87 @@ struct z_initial_state {
     }
   }
 
-  zuint8_t software_stack() const {
-    return _software_stack;
+  zuint8_t software_stack(uint8_t payload, bool is_constant) const {
+    if (is_constant) {
+      return _software_stack + payload;
+    } else {
+      return u8(_software_stack) + stack_offset_vars.at(payload);
+    }
+  }
+
+  zuint8_t temp() {
+    return _temp;
+  }
+
+  zuint8_t temp(uint8_t payload, bool is_constant) const {
+    if (is_constant) {
+      return _temp + payload;
+    } else {
+      return u8(_temp) + stack_offset_vars.at(payload);
+    }
+  }
+
+  zuint8_t special(uint16_t payload) const {
+    special_immediate val = special_immediate::from_int(payload);
+    zuint16_t op1 = 0;
+    zuint16_t op2 = 0;
+    switch (val.operand1) {
+      case special_immediate_operands::ABSOLUTE:
+        op1 = absolute(val.payload1, false);
+        break;
+      case special_immediate_operands::IMMEDIATE:
+        op1 = zuint16_t(immediate(val.payload1, false));
+        break;
+      case special_immediate_operands::ZERO_PAGE:
+        op1 = zuint16_t(zp(val.payload1, false));
+        break;
+      case special_immediate_operands::CONSTANT:
+        op1 = special_immediate_constant_values[val.payload1];
+        break;
+    }
+
+    switch (val.operand2) {
+      case special_immediate_operands::ABSOLUTE:
+        op2 = absolute(val.payload2, false);
+        break;
+      case special_immediate_operands::IMMEDIATE:
+        op2 = zuint16_t(immediate(val.payload2, false));
+        break;
+      case special_immediate_operands::ZERO_PAGE:
+        op2 = zuint16_t(zp(val.payload2, false));
+        break;
+      case special_immediate_operands::CONSTANT:
+        op2 = special_immediate_constant_values[val.payload2];
+        break;
+    }
+
+    switch (val.operation) {
+      case special_immediate_operations::AND:
+        return lobyte(op1 & op2);
+      case special_immediate_operations::AND_HI:
+        return hibyte(op1 & op2);
+      case special_immediate_operations::MINUS:
+        return lobyte(op1 - op2);
+      case special_immediate_operations::MINUS_HI:
+        return hibyte(op1 - op2);
+      case special_immediate_operations::NOT:
+        return lobyte(~op1);
+      case special_immediate_operations::NOT_HI:
+        return hibyte(~op1);
+      case special_immediate_operations::OR:
+        return lobyte(op1 | op2);
+      case special_immediate_operations::OR_HI:
+        return hibyte(op1 | op2);
+      case special_immediate_operations::PLUS:
+        return lobyte(op1 + op2);
+      case special_immediate_operations::PLUS_HI:
+        return hibyte(op1 + op2);
+      case special_immediate_operations::XOR:
+        return lobyte(op1 ^ op2);
+      case special_immediate_operations::XOR_HI:
+        return hibyte(op1 ^ op2);
+    }
+    assert(false);
   }
 
   zuint16_t known_subroutine(uint16_t n) const {
@@ -115,36 +205,36 @@ struct hash_initial_state {
     init = (init ^ ((seed >> 24) & 0xFF)) * 16777619;
   }
 
-  nuint8_t u8(uint8_t n) {
+  nuint8_t u8(uint8_t n) const {
     return n;
   }
 
-  nuint8_t u8(const char *n) {
+  nuint8_t u8(const char *n) const {
     return fnv(n);
   }
 
-  nuint16_t u16(uint16_t n) {
+  nuint16_t u16(uint16_t n) const {
     return n;
   }
 
-  nuint16_t u16(const char *n) {
+  nuint16_t u16(const char *n) const {
     return fnv(n);
   }
 
-  bool boolean(bool b) {
+  bool boolean(bool b) const {
     return b;
   }
 
-  bool boolean(const char *n) {
+  bool boolean(const char *n) const {
     return fnv(n) & 0x8000;
   }
 
-  hmemory memory() {
+  hmemory memory() const {
     hmemory result(seed);
     return result;
   }
 
-  nuint16_t absolute(uint16_t payload, bool is_constant) {
+  nuint16_t absolute(uint16_t payload, bool is_constant) const {
     if (is_constant) {
       return u16(payload);
     } else {
@@ -152,7 +242,7 @@ struct hash_initial_state {
     }
   }
 
-  nuint8_t immediate(uint16_t payload, bool is_constant) {
+  nuint8_t immediate(uint16_t payload, bool is_constant) const {
     if (is_constant) {
       return u8(payload & 0xFF);
     } else {
@@ -160,7 +250,7 @@ struct hash_initial_state {
     }
   }
 
-  nuint8_t zp(uint16_t payload, bool is_constant) {
+  nuint8_t zp(uint16_t payload, bool is_constant) const {
     if (is_constant) {
       return u8(payload & 0xFF);
     } else {
@@ -176,8 +266,87 @@ struct hash_initial_state {
     }
   }
 
-  nuint8_t software_stack() {
-      return 0x80;
+  nuint8_t software_stack(uint8_t offset, bool is_constant) const {
+    if (is_constant) {
+      return 0x80 + offset;
+    } else {
+      return 0x80 + (fnv(offset) & 0x7);
+    }
+  }
+
+  nuint8_t temp() const {
+    return 0x10;
+  }
+
+  nuint8_t temp(uint8_t offset, bool is_constant) const {
+    if (is_constant) {
+      return 0x10 + offset;
+    } else {
+      return 0x10 + (fnv(offset) % TEMP_SIZE);
+    }
+  }
+
+  nuint8_t special(uint16_t payload) const {
+    special_immediate val = special_immediate::from_int(payload);
+    nuint16_t op1 = 0;
+    nuint16_t op2 = 0;
+    switch (val.operand1) {
+      case special_immediate_operands::ABSOLUTE:
+        op1 = absolute(val.payload1, false);
+        break;
+      case special_immediate_operands::IMMEDIATE:
+        op1 = nuint16_t(immediate(val.payload1, false));
+        break;
+      case special_immediate_operands::ZERO_PAGE:
+        op1 = nuint16_t(zp(val.payload1, false));
+        break;
+      case special_immediate_operands::CONSTANT:
+        op1 = special_immediate_constant_values[val.payload1];
+        break;
+    }
+
+    switch (val.operand2) {
+      case special_immediate_operands::ABSOLUTE:
+        op2 = absolute(val.payload2, false);
+        break;
+      case special_immediate_operands::IMMEDIATE:
+        op2 = nuint16_t(immediate(val.payload2, false));
+        break;
+      case special_immediate_operands::ZERO_PAGE:
+        op2 = nuint16_t(zp(val.payload2, false));
+        break;
+      case special_immediate_operands::CONSTANT:
+        op2 = special_immediate_constant_values[val.payload2];
+        break;
+    }
+
+    switch (val.operation) {
+      case special_immediate_operations::AND:
+        return lobyte(op1 & op2);
+      case special_immediate_operations::AND_HI:
+        return hibyte(op1 & op2);
+      case special_immediate_operations::MINUS:
+        return lobyte(op1 - op2);
+      case special_immediate_operations::MINUS_HI:
+        return hibyte(op1 - op2);
+      case special_immediate_operations::NOT:
+        return lobyte(~op1);
+      case special_immediate_operations::NOT_HI:
+        return hibyte(~op1);
+      case special_immediate_operations::OR:
+        return lobyte(op1 | op2);
+      case special_immediate_operations::OR_HI:
+        return hibyte(op1 | op2);
+      case special_immediate_operations::PLUS:
+        return lobyte(op1 + op2);
+      case special_immediate_operations::PLUS_HI:
+        return hibyte(op1 + op2);
+      case special_immediate_operations::XOR:
+        return lobyte(op1 ^ op2);
+      case special_immediate_operations::XOR_HI:
+        return hibyte(op1 ^ op2);
+    }
+    assert(false);
   }
 
   nuint16_t known_subroutine(uint16_t payload) {
@@ -218,27 +387,27 @@ struct concrete_initial_state {
   cmemory _memory;
   concrete_initial_state(uint8_t* memory) : _memory(memory) {}
 
-  nuint8_t u8(uint8_t n) {
+  nuint8_t u8(uint8_t n) const {
     return n;
   }
 
-  nuint8_t u8(const char *n) {
+  nuint8_t u8(const char *n) const {
     return 0;
   }
 
-  nuint16_t u16(uint16_t n) {
+  nuint16_t u16(uint16_t n) const {
     return n;
   }
 
-  nuint16_t u16(const char *n) {
+  nuint16_t u16(const char *n) const {
     return 0;
   }
 
-  bool boolean(bool b) {
+  bool boolean(bool b) const {
     return b;
   }
 
-  bool boolean(const char *n) {
+  bool boolean(const char *n) const {
     return false;
   }
 
@@ -246,7 +415,7 @@ struct concrete_initial_state {
     return _memory;
   }
 
-  nuint16_t absolute(uint16_t payload, bool is_constant) {
+  nuint16_t absolute(uint16_t payload, bool is_constant) const {
     if (is_constant) {
       return u16(payload);
     } else {
@@ -254,7 +423,7 @@ struct concrete_initial_state {
     }
   }
 
-  nuint8_t immediate(uint16_t payload, bool is_constant) {
+  nuint8_t immediate(uint16_t payload, bool is_constant) const {
     if (is_constant) {
       return u8(payload & 0xFF);
     } else {
@@ -262,7 +431,7 @@ struct concrete_initial_state {
     }
   }
 
-  nuint8_t zp(uint16_t payload, bool is_constant) {
+  nuint8_t zp(uint16_t payload, bool is_constant) const {
     if (is_constant) {
       return u8(payload & 0xFF);
     } else {
@@ -270,7 +439,7 @@ struct concrete_initial_state {
     }
   }
 
-  nuint8_t relative(uint16_t payload, bool is_constant) {
+  nuint8_t relative(uint16_t payload, bool is_constant) const {
     if (is_constant) {
       return u8(payload & 0xFF);
     } else {
@@ -278,8 +447,79 @@ struct concrete_initial_state {
     }
   }
 
-  nuint8_t software_stack() {
-      return 0x80;
+  nuint8_t software_stack(uint8_t payload, bool is_constant) const {
+      return 0x80 + payload;
+  }
+
+  nuint8_t temp() const {
+    return 0x10;
+  }
+
+  nuint8_t temp(uint8_t offset, bool is_constant) const {
+      return 0x10 + offset;
+  }
+
+  nuint8_t special(uint16_t payload) const {
+    special_immediate val = special_immediate::from_int(payload);
+    nuint16_t op1 = 0;
+    nuint16_t op2 = 0;
+    switch (val.operand1) {
+      case special_immediate_operands::ABSOLUTE:
+        op1 = absolute(val.payload1, false);
+        break;
+      case special_immediate_operands::IMMEDIATE:
+        op1 = nuint16_t(immediate(val.payload1, false));
+        break;
+      case special_immediate_operands::ZERO_PAGE:
+        op1 = nuint16_t(zp(val.payload1, false));
+        break;
+      case special_immediate_operands::CONSTANT:
+        op1 = special_immediate_constant_values[val.payload1];
+        break;
+    }
+
+    switch (val.operand2) {
+      case special_immediate_operands::ABSOLUTE:
+        op2 = absolute(val.payload2, false);
+        break;
+      case special_immediate_operands::IMMEDIATE:
+        op2 = nuint16_t(immediate(val.payload2, false));
+        break;
+      case special_immediate_operands::ZERO_PAGE:
+        op2 = nuint16_t(zp(val.payload2, false));
+        break;
+      case special_immediate_operands::CONSTANT:
+        op2 = special_immediate_constant_values[val.payload2];
+        break;
+    }
+
+    switch (val.operation) {
+      case special_immediate_operations::AND:
+        return lobyte(op1 & op2);
+      case special_immediate_operations::AND_HI:
+        return hibyte(op1 & op2);
+      case special_immediate_operations::MINUS:
+        return lobyte(op1 - op2);
+      case special_immediate_operations::MINUS_HI:
+        return hibyte(op1 - op2);
+      case special_immediate_operations::NOT:
+        return lobyte(~op1);
+      case special_immediate_operations::NOT_HI:
+        return hibyte(~op1);
+      case special_immediate_operations::OR:
+        return lobyte(op1 | op2);
+      case special_immediate_operations::OR_HI:
+        return hibyte(op1 | op2);
+      case special_immediate_operations::PLUS:
+        return lobyte(op1 + op2);
+      case special_immediate_operations::PLUS_HI:
+        return hibyte(op1 + op2);
+      case special_immediate_operations::XOR:
+        return lobyte(op1 ^ op2);
+      case special_immediate_operations::XOR_HI:
+        return hibyte(op1 ^ op2);
+    }
+    assert(false);
   }
 
   nuint16_t known_subroutine(uint16_t payload) {

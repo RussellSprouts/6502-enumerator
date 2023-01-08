@@ -1,55 +1,15 @@
-// Adds assertions that stack operations never cause
-// the stack pointer to overflow or underflow. This
-// is useful for ensuring the stack usage is valid.
-#define ASSUME_NO_STACK_OVERFLOW true
-// Adds assertions that all memory operations in page 1
-// are inside of the active stack area, since anything outside
-// of it could be overwritten by an interrupt.
-#define ASSUME_VALID_STACK_USAGE true
-// Adds assertions that the arguments to ADC and SBC are valid
-// BCD when the decimal flag is set.
-#define ASSUME_VALID_BCD true
-// When using the hash machine, the number of reads and writes
-// to record
-#define NUM_ADDRESSES_TO_REMEMBER 8
-
-// Set this to PROCESSOR_2a03, PROCESSOR_65c02, or PROCESSOR_NMOS_6502
-#define PROCESSOR_2a03
-
-
-#ifdef PROCESSOR_2a03
-// The processor on the NES is an NMOS 6502,
-// but the decimal mode is cut for patent reasons.
-
-#define DECIMAL_ENABLED        false
-#define HAS_JUMP_INDIRECT_BUG  true
-#define USE_65c02_DECIMAL      false
-
-#elif defined(PROCESSOR_65c02)
-// The 65c02 family of processors includes
-// extra instructions and fixes some bugs.
-
-#define DECIMAL_ENABLED        true
-#define HAS_JUMP_INDIRECT_BUG  false
-#define USE_65c02_DECIMAL      true
-
-#elif defined(PROCESSOR_NMOS_6502)
-// The classic 6502
-
-#define DECIMAL_ENABLED        true
-#define HAS_JUMP_INDIRECT_BUG  true
-#define USE_65c02_DECIMAL      false
-
-#endif
-
+#include "config.h"
 #include <iostream>
 #include <vector>
 #include <iostream>
 #include <fstream>
+#include <sstream>
+#include <iomanip>
 #include "z3++.h"
 #include "zstdint.h"
 #include "initial_state.h"
 #include "nstdint.h"
+#include "special_immediate.h"
 
 // An enum of instructions, including variants across different
 // versions of the processor.
@@ -124,63 +84,182 @@ enum struct instruction_name: uint8_t {
   TRB = 66,
   TSB = 67,
   WAI = 68,
+  BRA = 69,
 
   // Reset memory bit
-  RMB0 = 69,
-  RMB1 = 70,
-  RMB2 = 71,
-  RMB3 = 72,
-  RMB4 = 73,
-  RMB5 = 74,
-  RMB6 = 75,
-  RMB7 = 76,
+  RMB0 = 70,
+  RMB1 = 71,
+  RMB2 = 72,
+  RMB3 = 73,
+  RMB4 = 74,
+  RMB5 = 75,
+  RMB6 = 76,
+  RMB7 = 77,
 
   // Set memory bit
-  SMB0 = 77,
-  SMB1 = 78,
-  SMB2 = 79,
-  SMB3 = 80,
-  SMB4 = 81,
-  SMB5 = 82,
-  SMB6 = 83,
-  SMB7 = 84,
+  SMB0 = 78,
+  SMB1 = 79,
+  SMB2 = 80,
+  SMB3 = 81,
+  SMB4 = 82,
+  SMB5 = 83,
+  SMB6 = 84,
+  SMB7 = 85,
 
   // Branch if bit reset
-  BBR0 = 85,
-  BBR1 = 86,
-  BBR2 = 87,
-  BBR3 = 88,
-  BBR4 = 89,
-  BBR5 = 90,
-  BBR6 = 91,
-  BBR7 = 92,
+  BBR0 = 86,
+  BBR1 = 87,
+  BBR2 = 88,
+  BBR3 = 89,
+  BBR4 = 90,
+  BBR5 = 91,
+  BBR6 = 92,
+  BBR7 = 93,
 
   // Branch if bit set
-  BBS0 = 93,
-  BBS1 = 94,
-  BBS2 = 95,
-  BBS3 = 96,
-  BBS4 = 97,
-  BBS5 = 98,
-  BBS6 = 99,
-  BBS7 = 100,
+  BBS0 = 94,
+  BBS1 = 95,
+  BBS2 = 96,
+  BBS3 = 97,
+  BBS4 = 98,
+  BBS5 = 99,
+  BBS6 = 100,
+  BBS7 = 101,
 
   // NMOS 6502 stable undocumented instructions
-  LAX = 101,
-  SAX = 102,
-  DCM = 103,
-  INS = 104,
-  SLO = 105,
-  RLA = 106,
-  SRE = 107,
-  RRA = 108,
-  ALR = 109,
-  ANC = 110,
-  AXS = 111,
-  ARR = 112,
+  LAX = 102,
+  SAX = 103,
+  DCM = 104,
+  INS = 105,
+  SLO = 106,
+  RLA = 107,
+  SRE = 108,
+  RRA = 109,
+  ALR = 110,
+  ANC = 111,
+  AXS = 112,
+  ARR = 113,
 
   UNKNOWN = 255,
 };
+
+std::string instruction_name_to_string(instruction_name ins) {
+  switch(ins) {
+  case instruction_name::ADC: return "ADC";
+  case instruction_name::AND: return "AND"; 
+  case instruction_name::ASL: return "ASL"; 
+  case instruction_name::BCC: return "BCC"; 
+  case instruction_name::BCS: return "BCS"; 
+  case instruction_name::BEQ: return "BEQ"; 
+  case instruction_name::BIT: return "BIT"; 
+  case instruction_name::BMI: return "BMI"; 
+  case instruction_name::BNE: return "BNE"; 
+  case instruction_name::BPL: return "BPL"; 
+  case instruction_name::BRK: return "BRK"; 
+  case instruction_name::BVC: return "BVC"; 
+  case instruction_name::BVS: return "BVS"; 
+  case instruction_name::CLC: return "CLC"; 
+  case instruction_name::CLD: return "CLD"; 
+  case instruction_name::CLI: return "CLI"; 
+  case instruction_name::CLV: return "CLV"; 
+  case instruction_name::CMP: return "CMP"; 
+  case instruction_name::CPX: return "CPX"; 
+  case instruction_name::CPY: return "CPY"; 
+  case instruction_name::DEC: return "DEC"; 
+  case instruction_name::DEX: return "DEX"; 
+  case instruction_name::DEY: return "DEY"; 
+  case instruction_name::EOR: return "EOR"; 
+  case instruction_name::INC: return "INC"; 
+  case instruction_name::INX: return "INX"; 
+  case instruction_name::INY: return "INY"; 
+  case instruction_name::JMP: return "JMP"; 
+  case instruction_name::JSR: return "JSR"; 
+  case instruction_name::LDA: return "LDA"; 
+  case instruction_name::LDX: return "LDX"; 
+  case instruction_name::LDY: return "LDY"; 
+  case instruction_name::LSR: return "LSR"; 
+  case instruction_name::NOP: return "NOP"; 
+  case instruction_name::ORA: return "ORA"; 
+  case instruction_name::PHA: return "PHA"; 
+  case instruction_name::PHP: return "PHP"; 
+  case instruction_name::PLA: return "PLA"; 
+  case instruction_name::PLP: return "PLP"; 
+  case instruction_name::ROL: return "ROL"; 
+  case instruction_name::ROR: return "ROR"; 
+  case instruction_name::RTI: return "RTI"; 
+  case instruction_name::RTS: return "RTS"; 
+  case instruction_name::SBC: return "SBC"; 
+  case instruction_name::SEC: return "SEC"; 
+  case instruction_name::SED: return "SED"; 
+  case instruction_name::SEI: return "SEI"; 
+  case instruction_name::STA: return "STA"; 
+  case instruction_name::STX: return "STX"; 
+  case instruction_name::STY: return "STY"; 
+  case instruction_name::TAX: return "TAX"; 
+  case instruction_name::TAY: return "TAY"; 
+  case instruction_name::TSX: return "TSX"; 
+  case instruction_name::TXA: return "TXA"; 
+  case instruction_name::TXS: return "TXS"; 
+  case instruction_name::TYA: return "TYA"; 
+  case instruction_name::PHX: return "PHX"; 
+  case instruction_name::PHY: return "PHY"; 
+  case instruction_name::PLX: return "PLX"; 
+  case instruction_name::PLY: return "PLY"; 
+  case instruction_name::STP: return "STP"; 
+  case instruction_name::STZ: return "STZ"; 
+  case instruction_name::TRB: return "TRB"; 
+  case instruction_name::TSB: return "TSB"; 
+  case instruction_name::WAI: return "WAI"; 
+  case instruction_name::BRA: return "BRA";
+  case instruction_name::RMB0: return "RMB0"; 
+  case instruction_name::RMB1: return "RMB1"; 
+  case instruction_name::RMB2: return "RMB2"; 
+  case instruction_name::RMB3: return "RMB3"; 
+  case instruction_name::RMB4: return "RMB4"; 
+  case instruction_name::RMB5: return "RMB5"; 
+  case instruction_name::RMB6: return "RMB6"; 
+  case instruction_name::RMB7: return "RMB7"; 
+  case instruction_name::SMB0: return "SMB0"; 
+  case instruction_name::SMB1: return "SMB1"; 
+  case instruction_name::SMB2: return "SMB2"; 
+  case instruction_name::SMB3: return "SMB3"; 
+  case instruction_name::SMB4: return "SMB4"; 
+  case instruction_name::SMB5: return "SMB5"; 
+  case instruction_name::SMB6: return "SMB6"; 
+  case instruction_name::SMB7: return "SMB7"; 
+  case instruction_name::BBR0: return "BBR0"; 
+  case instruction_name::BBR1: return "BBR1"; 
+  case instruction_name::BBR2: return "BBR2"; 
+  case instruction_name::BBR3: return "BBR3"; 
+  case instruction_name::BBR4: return "BBR4"; 
+  case instruction_name::BBR5: return "BBR5"; 
+  case instruction_name::BBR6: return "BBR6"; 
+  case instruction_name::BBR7: return "BBR7"; 
+  case instruction_name::BBS0: return "BBS0"; 
+  case instruction_name::BBS1: return "BBS1"; 
+  case instruction_name::BBS2: return "BBS2"; 
+  case instruction_name::BBS3: return "BBS3"; 
+  case instruction_name::BBS4: return "BBS4"; 
+  case instruction_name::BBS5: return "BBS5"; 
+  case instruction_name::BBS6: return "BBS6"; 
+  case instruction_name::BBS7: return "BBS7"; 
+  case instruction_name::LAX: return "LAX"; 
+  case instruction_name::SAX: return "SAX"; 
+  case instruction_name::DCM: return "DCM"; 
+  case instruction_name::INS: return "INS"; 
+  case instruction_name::SLO: return "SLO"; 
+  case instruction_name::RLA: return "RLA"; 
+  case instruction_name::SRE: return "SRE"; 
+  case instruction_name::RRA: return "RRA"; 
+  case instruction_name::ALR: return "ALR"; 
+  case instruction_name::ANC: return "ANC"; 
+  case instruction_name::AXS: return "AXS"; 
+  case instruction_name::ARR: return "ARR";
+  case instruction_name::NONE: return "; END";
+  case instruction_name::UNKNOWN: return "XXX";
+  }
+  return "XXX";
+}
 
 // Instructions can have const payloads or arbitrary payloads
 // with various addressing modes.
@@ -190,51 +269,72 @@ enum struct instruction_name: uint8_t {
 // or an arbitrary consistent value based on the hash seed.
 // Constant payloads are actual values.
 enum struct instruction_payload_type: uint8_t {
-  // Flag indicating the instruction is 2 bytes long
-  SIZE_2 = 0x40,
-  // Flag indicating the instruction is 3 bytes long
-  SIZE_3 = 0x60,
   // Flag indicating the payload is a constant value.
   CONST_FLAG = 0x80,
 
   // for instructions with no operands
   NONE = 0x0,
   // an arbitrary 16 bit address
-  ABSOLUTE = 0x1 | SIZE_3,
+  ABSOLUTE = 0x1,
   // am arbitrary 16 bit address + x
-  ABSOLUTE_X = 0x2 | SIZE_3,
+  ABSOLUTE_X = 0x2,
   // an arbitrary 16 bit address + y
-  ABSOLUTE_Y = 0x3 | SIZE_3,
+  ABSOLUTE_Y = 0x3,
   // the pointer at (an arbitrary 8 bit address + x)
-  X_INDIRECT = 0x4 | SIZE_2,
+  X_INDIRECT = 0x4,
   // (the pointer at an arbitrary 8 bit address) + y
-  INDIRECT_Y = 0x5 | SIZE_2,
+  INDIRECT_Y = 0x5,
   // an arbitrary 8 bit address
-  ZERO_PAGE = 0x6 | SIZE_2,
+  ZERO_PAGE = 0x6,
   // an arbitrary 8 bit address + x
-  ZERO_PAGE_X = 0x7 | SIZE_2,
+  ZERO_PAGE_X = 0x7,
   // an arbitrary 8 bit address + y
-  ZERO_PAGE_Y = 0x8 | SIZE_2,
+  ZERO_PAGE_Y = 0x8,
   // an arbitrary immediate constant
-  IMMEDIATE = 0x9 | SIZE_2,
+  IMMEDIATE = 0x9,
   // the pointer at (an arbitrary 16 bit address)
-  INDIRECT_ABSOLUTE = 0xA | SIZE_3,
+  INDIRECT_ABSOLUTE = 0xA,
   // the pointer at (an arbitrary 16 bit address + x)
-  X_INDIRECT_ABSOLUTE = 0xB | SIZE_2,
+  X_INDIRECT_ABSOLUTE = 0xB,
   // the pointer at (an arbitrary 8 bit address)
-  ZERO_PAGE_INDIRECT = 0xC | SIZE_2,
+  ZERO_PAGE_INDIRECT = 0xC,
   // relative branch address (an arbitrary 16 bit address)
-  RELATIVE = 0xD | SIZE_2,
+  RELATIVE = 0xD,
   // 8 bit relative branch and 8 bit address
-  BRANCH_IF_BIT = 0xE | SIZE_3,
-  // Software stack addressing on the zero page using the X register,
-  // i.e., lda Stack+payload, x
-  SOFTWARE_STACK_CONST = 0xF | SIZE_2 | CONST_FLAG,
-  // i.e., lda (Stack + payload, x)
-  SOFTWARE_STACK_INDIRECT_CONST = 0x10 | SIZE_2 | CONST_FLAG,
+  BRANCH_IF_BIT = 0xE,
+  // Software stack addressing on the zero page using the X register
+  // as the stack pointer.
+  // i.e., lda Stack+offset0, x
+  SOFTWARE_STACK = 0xF,
+  // i.e., lda (Stack + offset0, x)
+  SOFTWARE_STACK_INDIRECT = 0x10,
   // A reference to a known subroutine with the given ID. Allows
   // defining known subroutines and optimizing code which calls them.
-  KNOWN_SUBROUTINE_CONST = 0x11 | SIZE_3 | CONST_FLAG,
+  KNOWN_SUBROUTINE_CONST = 0x11 | CONST_FLAG,
+  // A temporary memory location
+  ZERO_PAGE_TEMP = 0x12,
+  // A temporary memory location + x
+  ZERO_PAGE_X_TEMP = 0x13,
+  // A temporary memory location + y
+  ZERO_PAGE_Y_TEMP = 0x14,
+  // The pointer at (a temporary memory location) + y
+  INDIRECT_Y_TEMP = 0x15,
+  // The pointer at (a temporary memory location + x)
+  X_INDIRECT_TEMP = 0x16,
+  // A special immediate value. Payload is special_immediate
+  SPECIAL_IMMEDIATE = 0x17,
+  // Read-Modify-Write a zero page location.
+  RMW_ZERO_PAGE = 0x18,
+  // Read-Modify-Write a zero page location + x
+  RMW_ZERO_PAGE_X = 0x19,
+  // Read-Modify-Write an absolute location
+  RMW_ABSOLUTE = 0x1A,
+  // Read-Modify-Write an absolute location + x
+  RMW_ABSOLUTE_X = 0x1B,
+  // Read-Modify-Write a temporary memory location
+  RMW_ZERO_PAGE_TEMP = 0x1C,
+  // Read-Modify-Write a temporary memory location + x
+  RMW_ZERO_PAGE_X_TEMP = 0x1D,
 
   // a specific 16 bit address
   ABSOLUTE_CONST = ABSOLUTE | CONST_FLAG,
@@ -264,12 +364,102 @@ enum struct instruction_payload_type: uint8_t {
   RELATIVE_CONST = RELATIVE | CONST_FLAG,
   // 8 bit relative branch and 8 bit address
   BRANCH_IF_BIT_CONST = BRANCH_IF_BIT | CONST_FLAG,
+  // a specific offset from the software stack, using x as the stack pointer.
+  // e.g. lda Stack+2, x
+  SOFTWARE_STACK_CONST = SOFTWARE_STACK | CONST_FLAG,
+  // the pointer at a specific offset from the software stack, using x as the
+  // stack pointer.
+  // e.g. lda (Stack+2, x)
+  SOFTWARE_STACK_INDIRECT_CONST = SOFTWARE_STACK_INDIRECT | CONST_FLAG,
+  ZERO_PAGE_TEMP_CONST = ZERO_PAGE_TEMP | CONST_FLAG,
+  // A temporary memory location + x
+  ZERO_PAGE_X_TEMP_CONST = ZERO_PAGE_X_TEMP | CONST_FLAG,
+  // A temporary memory location + y
+  ZERO_PAGE_Y_TEMP_CONST = ZERO_PAGE_Y_TEMP | CONST_FLAG,
+  // The pointer at (a temporary memory location) + y
+  INDIRECT_Y_TEMP_CONST = INDIRECT_Y_TEMP | CONST_FLAG,
+  // The pointer at (a temporary memory location + x)
+  X_INDIRECT_TEMP_CONST = X_INDIRECT_TEMP | CONST_FLAG,
+  // Read-Modify-Write a specific zero page location.
+  RMW_ZERO_PAGE_CONST = RMW_ZERO_PAGE | CONST_FLAG,
+  // Read-Modify-Write a specific zero page location + x
+  RMW_ZERO_PAGE_X_CONST = RMW_ZERO_PAGE_X | CONST_FLAG,
+  // Read-Modify-Write a specific absolute location
+  RMW_ABSOLUTE_CONST = RMW_ABSOLUTE | CONST_FLAG,
+  // Read-Modify-Write a specific absolute location + x
+  RMW_ABSOLUTE_X_CONST = RMW_ABSOLUTE_X | CONST_FLAG,
+  // Read-Modify-Write a temporary memory location
+  RMW_ZERO_PAGE_TEMP_CONST = RMW_ZERO_PAGE_TEMP | CONST_FLAG,
+  // Read-Modify-Write a temporary memory location + x
+  RMW_ZERO_PAGE_X_TEMP_CONST = RMW_ZERO_PAGE_X_TEMP | CONST_FLAG,
 };
 
 constexpr uint8_t instruction_size(instruction_payload_type pt) {
-  auto flags = (static_cast<uint8_t>(pt) & 0x60) >> 5;
-  if (flags) { return flags; }
-  return 1;
+  switch (pt) {
+  case instruction_payload_type::NONE:
+    return 1;
+  case instruction_payload_type::IMMEDIATE_CONST:
+  case instruction_payload_type::IMMEDIATE:
+  case instruction_payload_type::INDIRECT_Y_CONST:
+  case instruction_payload_type::INDIRECT_Y:
+  case instruction_payload_type::RELATIVE_CONST:
+  case instruction_payload_type::RELATIVE:
+  case instruction_payload_type::SOFTWARE_STACK_CONST:
+  case instruction_payload_type::SOFTWARE_STACK:
+  case instruction_payload_type::SOFTWARE_STACK_INDIRECT_CONST:
+  case instruction_payload_type::SOFTWARE_STACK_INDIRECT:
+  case instruction_payload_type::X_INDIRECT_CONST:
+  case instruction_payload_type::X_INDIRECT:
+  case instruction_payload_type::ZERO_PAGE_CONST:
+  case instruction_payload_type::ZERO_PAGE_INDIRECT_CONST:
+  case instruction_payload_type::ZERO_PAGE_INDIRECT:
+  case instruction_payload_type::ZERO_PAGE_X_CONST:
+  case instruction_payload_type::ZERO_PAGE_X:
+  case instruction_payload_type::ZERO_PAGE_Y_CONST:
+  case instruction_payload_type::ZERO_PAGE_Y:
+  case instruction_payload_type::ZERO_PAGE:
+  case instruction_payload_type::ZERO_PAGE_TEMP:
+  case instruction_payload_type::ZERO_PAGE_TEMP_CONST:
+  case instruction_payload_type::ZERO_PAGE_X_TEMP:
+  case instruction_payload_type::ZERO_PAGE_X_TEMP_CONST:
+  case instruction_payload_type::ZERO_PAGE_Y_TEMP:
+  case instruction_payload_type::ZERO_PAGE_Y_TEMP_CONST:
+  case instruction_payload_type::INDIRECT_Y_TEMP:
+  case instruction_payload_type::INDIRECT_Y_TEMP_CONST:
+  case instruction_payload_type::X_INDIRECT_TEMP:
+  case instruction_payload_type::X_INDIRECT_TEMP_CONST:
+  case instruction_payload_type::SPECIAL_IMMEDIATE:
+  case instruction_payload_type::RMW_ZERO_PAGE:
+  case instruction_payload_type::RMW_ZERO_PAGE_CONST:
+  case instruction_payload_type::RMW_ZERO_PAGE_X:
+  case instruction_payload_type::RMW_ZERO_PAGE_X_CONST:
+  case instruction_payload_type::RMW_ZERO_PAGE_TEMP:
+  case instruction_payload_type::RMW_ZERO_PAGE_TEMP_CONST:
+  case instruction_payload_type::RMW_ZERO_PAGE_X_TEMP:
+  case instruction_payload_type::RMW_ZERO_PAGE_X_TEMP_CONST:
+    return 2;
+  case instruction_payload_type::ABSOLUTE_CONST:
+  case instruction_payload_type::ABSOLUTE_X_CONST:
+  case instruction_payload_type::ABSOLUTE_X:
+  case instruction_payload_type::ABSOLUTE_Y_CONST:
+  case instruction_payload_type::ABSOLUTE_Y:
+  case instruction_payload_type::ABSOLUTE:
+  case instruction_payload_type::BRANCH_IF_BIT_CONST:
+  case instruction_payload_type::BRANCH_IF_BIT:
+  case instruction_payload_type::INDIRECT_ABSOLUTE_CONST:
+  case instruction_payload_type::INDIRECT_ABSOLUTE:
+  case instruction_payload_type::KNOWN_SUBROUTINE_CONST:
+  case instruction_payload_type::X_INDIRECT_ABSOLUTE_CONST:
+  case instruction_payload_type::X_INDIRECT_ABSOLUTE:
+  case instruction_payload_type::RMW_ABSOLUTE:
+  case instruction_payload_type::RMW_ABSOLUTE_CONST:
+  case instruction_payload_type::RMW_ABSOLUTE_X:
+  case instruction_payload_type::RMW_ABSOLUTE_X_CONST:
+    return 3;
+  case instruction_payload_type::CONST_FLAG:
+    assert(false);
+  }
+  return 0;
 }
 
 constexpr instruction_payload_type operator|(instruction_payload_type lhs, instruction_payload_type rhs)
@@ -311,6 +501,177 @@ struct instruction {
   uint16_t payload;
 };
 
+std::string instruction_to_string(instruction ins) {
+  std::string name = instruction_name_to_string(ins.name);
+
+  switch (ins.payload_type) {
+    case instruction_payload_type::ABSOLUTE:
+    case instruction_payload_type::RMW_ABSOLUTE:
+      return name + " absolute" + std::to_string(ins.payload);
+    case instruction_payload_type::ABSOLUTE_CONST:
+    case instruction_payload_type::RMW_ABSOLUTE_CONST:
+      return name + " $" + int_to_hex(ins.payload, 4);
+    case instruction_payload_type::ABSOLUTE_X:
+    case instruction_payload_type::RMW_ABSOLUTE_X:
+      return name + " absolute" + std::to_string(ins.payload) + ", x";
+    case instruction_payload_type::ABSOLUTE_X_CONST:
+    case instruction_payload_type::RMW_ABSOLUTE_X_CONST:
+      return name + " $" + int_to_hex(ins.payload, 4) + ", x";
+    case instruction_payload_type::ABSOLUTE_Y:
+      return name + " absolute" + std::to_string(ins.payload) + ", y";
+    case instruction_payload_type::ABSOLUTE_Y_CONST:
+      return name + " $" + int_to_hex(ins.payload, 4) + ", y";
+    case instruction_payload_type::BRANCH_IF_BIT:
+      return name + " relative" + std::to_string(ins.payload >> 8) + ", zp" + std::to_string(ins.payload & 0xFF);
+    case instruction_payload_type::BRANCH_IF_BIT_CONST:
+      return name + " $" + int_to_hex(ins.payload >> 8, 2) + ", $" + int_to_hex(ins.payload & 0xFF, 2);
+    case instruction_payload_type::IMMEDIATE:
+      return name + " #immediate" + std::to_string(ins.payload);
+    case instruction_payload_type::IMMEDIATE_CONST:
+      return name + " #$" + int_to_hex(ins.payload, 2);
+    case instruction_payload_type::INDIRECT_ABSOLUTE:
+      return name + " [absolute" + std::to_string(ins.payload) + "]";
+    case instruction_payload_type::INDIRECT_ABSOLUTE_CONST:
+      return name + " [$" + int_to_hex(ins.payload, 4) + "]";
+    case instruction_payload_type::INDIRECT_Y:
+      return name + " [zp" + std::to_string(ins.payload) + "], y";
+    case instruction_payload_type::INDIRECT_Y_CONST:
+      return name + " [$" + int_to_hex(ins.payload, 2) + "], y";
+    case instruction_payload_type::INDIRECT_Y_TEMP:
+      return name + " [temp + offset" + std::to_string(ins.payload) + "], y";
+    case instruction_payload_type::INDIRECT_Y_TEMP_CONST:
+      return name + " [temp + $" + int_to_hex(ins.payload, 2) + "], y";
+    case instruction_payload_type::KNOWN_SUBROUTINE_CONST:
+      return name + " subroutine" + std::to_string(ins.payload);
+    case instruction_payload_type::NONE:
+      return name;
+    case instruction_payload_type::RELATIVE:
+      return name + " relative" + std::to_string(ins.payload);
+    case instruction_payload_type::RELATIVE_CONST:
+      return name + " $" + int_to_hex(ins.payload, 2);
+    case instruction_payload_type::SOFTWARE_STACK:
+      return name + " stack + offset" + std::to_string(ins.payload) + ", x";
+    case instruction_payload_type::SOFTWARE_STACK_CONST:
+      if (ins.payload == 0) {
+        return name + " stack, x";
+      }
+      return name + " stack + $" + int_to_hex(ins.payload, 2) + ", x";
+    case instruction_payload_type::SOFTWARE_STACK_INDIRECT:
+      return name + " [stack + offset" + std::to_string(ins.payload) + ", x]";
+    case instruction_payload_type::SOFTWARE_STACK_INDIRECT_CONST:
+      if (ins.payload == 0) {
+        return name + " [stack, x]";
+      }
+      return name + " [stack + $" + int_to_hex(ins.payload, 2) + ", x]";
+    case instruction_payload_type::SPECIAL_IMMEDIATE:
+      return name + " #" + special_immediate_to_string(special_immediate::from_int(ins.payload));
+    case instruction_payload_type::X_INDIRECT_ABSOLUTE:
+      return name + " [absolute" + std::to_string(ins.payload) + ", x]";
+    case instruction_payload_type::X_INDIRECT_ABSOLUTE_CONST:
+      return name + " [$" + int_to_hex(ins.payload, 4) + ", x]";
+    case instruction_payload_type::X_INDIRECT:
+      return name + " [zp" + std::to_string(ins.payload) + ", x]";
+    case instruction_payload_type::X_INDIRECT_CONST:
+      return name + " [$" + int_to_hex(ins.payload, 2) + ", x]";
+    case instruction_payload_type::X_INDIRECT_TEMP:
+      return name + " [temp + offset" + std::to_string(ins.payload) + ", x]";
+    case instruction_payload_type::X_INDIRECT_TEMP_CONST:
+      return name + " [temp + $" + int_to_hex(ins.payload, 2) + ", x]";
+    case instruction_payload_type::ZERO_PAGE:
+    case instruction_payload_type::RMW_ZERO_PAGE:
+      return name + " zp" + std::to_string(ins.payload);
+    case instruction_payload_type::ZERO_PAGE_CONST:
+    case instruction_payload_type::RMW_ZERO_PAGE_CONST:
+      return name + " $" + int_to_hex(ins.payload, 2);
+    case instruction_payload_type::ZERO_PAGE_INDIRECT:
+      return name + " [zp" + std::to_string(ins.payload) + "]";
+    case instruction_payload_type::ZERO_PAGE_INDIRECT_CONST:
+      return name + " [$" + int_to_hex(ins.payload, 2) + "]";
+    case instruction_payload_type::ZERO_PAGE_TEMP:
+    case instruction_payload_type::RMW_ZERO_PAGE_TEMP:
+      return name + " temp + offset" + std::to_string(ins.payload);
+    case instruction_payload_type::ZERO_PAGE_TEMP_CONST:
+    case instruction_payload_type::RMW_ZERO_PAGE_TEMP_CONST:
+      return name + " temp + $" + int_to_hex(ins.payload, 2);
+    case instruction_payload_type::ZERO_PAGE_X:
+    case instruction_payload_type::RMW_ZERO_PAGE_X:
+      return name + " zp" + std::to_string(ins.payload) + ", x";
+    case instruction_payload_type::ZERO_PAGE_X_CONST:
+    case instruction_payload_type::RMW_ZERO_PAGE_X_CONST:
+      return name + " $" + int_to_hex(ins.payload, 2) + ", x";
+    case instruction_payload_type::ZERO_PAGE_X_TEMP:
+    case instruction_payload_type::RMW_ZERO_PAGE_X_TEMP:
+      return name + " temp + offset" + std::to_string(ins.payload) + ", x";
+    case instruction_payload_type::ZERO_PAGE_X_TEMP_CONST:
+    case instruction_payload_type::RMW_ZERO_PAGE_X_TEMP_CONST:
+      return name + " temp + $" + int_to_hex(ins.payload, 2) + ", x";
+    case instruction_payload_type::ZERO_PAGE_Y:
+      return name + " zp" + std::to_string(ins.payload) + ", y";
+    case instruction_payload_type::ZERO_PAGE_Y_CONST:
+      return name + " $" + int_to_hex(ins.payload, 2) + ", y";
+    case instruction_payload_type::ZERO_PAGE_Y_TEMP:
+      return name + " temp + offset" + std::to_string(ins.payload) + ", y";
+    case instruction_payload_type::ZERO_PAGE_Y_TEMP_CONST:
+      return name + " temp + $" + int_to_hex(ins.payload, 2) + ", y";
+    case instruction_payload_type::CONST_FLAG:
+      assert(false);
+  }
+  return name;
+}
+
+enum struct usage_flags : uint16_t {
+  NONE = 0x0,
+  A = 0x1,
+  X = 0x2,
+  Y = 0x4,
+  SP = 0x8,
+  CC_S = 0x10,
+  CC_V = 0x20,
+  CC_I = 0x40,
+  CC_D = 0x80,
+  CC_C = 0x100,
+  CC_Z = 0x200,
+  MEMORY = 0x400
+};
+
+constexpr usage_flags operator&(const usage_flags lhs, const usage_flags rhs)
+{
+    return static_cast<usage_flags> (
+        static_cast<uint16_t>(lhs) &
+        static_cast<uint16_t>(rhs)
+    );
+}
+constexpr usage_flags operator|(const usage_flags lhs, const usage_flags rhs)
+{
+    return static_cast<usage_flags> (
+        static_cast<uint16_t>(lhs) |
+        static_cast<uint16_t>(rhs)
+    );
+}
+
+
+constexpr inline usage_flags& operator|=(usage_flags& lhs, usage_flags rhs)
+{
+  return lhs = lhs | rhs;
+}
+
+std::string usage_flags_to_string(usage_flags flags) {
+  return std::string("")
+    + ((flags & usage_flags::A) == usage_flags::NONE ? "" : "a")
+    + ((flags & usage_flags::X) == usage_flags::NONE ? "" : "x")
+    + ((flags & usage_flags::Y) == usage_flags::NONE ? "" : "y")
+    + ((flags & usage_flags::SP) == usage_flags::NONE ? "" : "s")
+    + ((flags & usage_flags::MEMORY) == usage_flags::NONE ? "" : "m")
+    + "("
+    + ((flags & usage_flags::CC_S) == usage_flags::NONE ? "" : "s")
+    + ((flags & usage_flags::CC_V) == usage_flags::NONE ? "" : "v")
+    + ((flags & usage_flags::CC_I) == usage_flags::NONE ? "" : "i")
+    + ((flags & usage_flags::CC_D) == usage_flags::NONE ? "" : "d")
+    + ((flags & usage_flags::CC_C) == usage_flags::NONE ? "" : "c")
+    + ((flags & usage_flags::CC_Z) == usage_flags::NONE ? "" : "z")
+    + ")";
+}
+
 /**
  * @brief An emulator which can operate on z3 symbolic values or actual numbers.
  * 
@@ -336,7 +697,10 @@ struct machine {
   boolean _assumptions;
   boolean _has_exited;
   memory_t _memory;
+  u16 _cycles;
   initial_state& _initial_state;
+  usage_flags _uses;
+  usage_flags _affects;
 
   machine(initial_state &s):
     _a(s.u8("a")),
@@ -353,7 +717,10 @@ struct machine {
     _assumptions(s.boolean(true)),
     _has_exited(s.boolean(false)),
     _memory(s.memory()),
-    _initial_state(s) {}
+    _cycles(0),
+    _initial_state(s),
+    _uses(usage_flags::NONE),
+    _affects(usage_flags::NONE) {}
 
   template <typename other_machine>
   void copy_from(other_machine &other) {
@@ -376,28 +743,30 @@ struct machine {
   // the current instruction sequence. That way, we can
   // execute a series of instructions unconditionally, but
   // model the case where a conditional branch is taken.
-  u8 a() const { return _a; }
-  void a(u8 val) { _a = ite8(_has_exited, _a, val); }
-  u8 x() const { return _x; }
-  void x(u8 val) { _x = ite8(_has_exited, _x, val); }
-  u8 y() const { return _y; }
-  void y(u8 val) { _y = ite8(_has_exited, _y, val); }
-  u8 sp() const { return _sp; }
-  void sp(u8 val) { _sp = ite8(_has_exited, _sp, val); }
-  boolean cc_s() const { return _cc_s; }
-  void cc_s(boolean val) { _cc_s = iteB(_has_exited, _cc_s, val); }
-  boolean cc_v() const { return _cc_v; }
-  void cc_v(boolean val) { _cc_v = iteB(_has_exited, _cc_v, val); }
-  boolean cc_i() const { return _cc_i; }
-  void cc_i(boolean val) { _cc_i = iteB(_has_exited, _cc_i, val); }
-  boolean cc_d() const { return _cc_d; }
-  void cc_d(boolean val) { _cc_d = iteB(_has_exited, _cc_d, val); }
-  boolean cc_c() const { return _cc_c; }
-  void cc_c(boolean val) { _cc_c = iteB(_has_exited, _cc_c, val); }
-  boolean cc_z() const { return _cc_z; }
-  void cc_z(boolean val) { _cc_z = iteB(_has_exited, _cc_z, val); }
+  u8 a() { _uses |= usage_flags::A; return _a; }
+  void a(u8 val) { _affects |= usage_flags::A; _a = ite8(_has_exited, _a, val); }
+  u8 x() { _uses |= usage_flags::X; return _x; }
+  void x(u8 val) { _affects |= usage_flags::X; _x = ite8(_has_exited, _x, val); }
+  u8 y() { _uses |= usage_flags::Y; return _y; }
+  void y(u8 val) { _affects |= usage_flags::Y; _y = ite8(_has_exited, _y, val); }
+  u8 sp() { _uses |= usage_flags::SP; return _sp; }
+  void sp(u8 val) { _affects |= usage_flags::SP; _sp = ite8(_has_exited, _sp, val); }
+  boolean cc_s() { _uses |= usage_flags::CC_S; return _cc_s; }
+  void cc_s(boolean val) { _affects |= usage_flags::CC_S; _cc_s = iteB(_has_exited, _cc_s, val); }
+  boolean cc_v() { _uses |= usage_flags::CC_V; return _cc_v; }
+  void cc_v(boolean val) { _affects |= usage_flags::CC_V; _cc_v = iteB(_has_exited, _cc_v, val); }
+  boolean cc_i() { _uses |= usage_flags::CC_I; return _cc_i; }
+  void cc_i(boolean val) { _affects |= usage_flags::CC_I; _cc_i = iteB(_has_exited, _cc_i, val); }
+  boolean cc_d() { _uses |= usage_flags::CC_D; return _cc_d; }
+  void cc_d(boolean val) { _affects |= usage_flags::CC_D; _cc_d = iteB(_has_exited, _cc_d, val); }
+  boolean cc_c() { _uses |= usage_flags::CC_C; return _cc_c; }
+  void cc_c(boolean val) { _affects |= usage_flags::CC_C; _cc_c = iteB(_has_exited, _cc_c, val); }
+  boolean cc_z() { _uses |= usage_flags::CC_Z; return _cc_z; }
+  void cc_z(boolean val) { _affects |= usage_flags::CC_Z; _cc_z = iteB(_has_exited, _cc_z, val); }
   u16 pc() const { return _pc; }
   void pc(u16 val) { _pc = ite16(_has_exited, _pc, val); }
+  u16 cycles() { return _cycles; }
+  void cycles(u16 val) { _cycles = ite16(_has_exited, _cycles, val); }
 
   // Add an assumption that must be true for the current execution
   // to be valid and defined behavior. If the assumptions end up
@@ -416,6 +785,10 @@ struct machine {
   void reset_exit() {
     _has_exited = false;
   }
+  void branch_if(boolean cond, u16 target, boolean branch_on_different_page) {
+    cycles(cycles() + u16(cond) + u16(cond && branch_on_different_page));
+    exit_if(cond, target);
+  }
 
   u8 set_sz(u8 val) {
     cc_s(val >= 0x80);
@@ -425,37 +798,42 @@ struct machine {
 
   u8 read(u16 addr) {
     if (ASSUME_VALID_STACK_USAGE) {
-      assume((addr & 0xFF00) != 0x100 || ((addr & 0xFF) > u16(sp())));
+      assume((addr & 0xFF00) != 0x100 || ((addr & 0xFF) > u16(_sp)));
     }
+    _uses |= usage_flags::MEMORY;
     return _memory.read(addr);
   }
 
   void write(u16 addr, u8 val) {
     if (ASSUME_VALID_STACK_USAGE) {
-      assume((addr & 0xFF00) != 0x100 || ((addr & 0xFF) > u16(sp())));
+      assume((addr & 0xFF00) != 0x100 || ((addr & 0xFF) > u16(_sp)));
     }
+    _affects |= usage_flags::MEMORY; 
     _memory.write_if(!_has_exited, addr, val);
   }
 
   u8 pull() {
+    u8 result = read(from_bytes(0x1, sp() + 1));
     sp(sp() + 1);
+    cycles(cycles() + 2);
     if (ASSUME_NO_STACK_OVERFLOW) {
-      assume(sp() != 0);
+      assume(_sp != 0);
     }
-    return read(from_bytes(0x1, sp()));
+    return result;
   }
 
   u8 push(u8 val) {
-    auto addr = from_bytes(0x1, sp());
-    write(addr, val);
+    u16 addr = from_bytes(0x1, sp());
     sp(sp() - 1);
+    cycles(cycles() + 1);
+    write(addr, val);
     if (ASSUME_NO_STACK_OVERFLOW) {
-      assume(sp() != 0xFF);
+      assume(_sp != 0xFF);
     }
     return val;
   }
 
-  u8 flags_to_byte() const {
+  u8 flags_to_byte() {
     return ite8(cc_s(), (u8)0x80, (u8)0x00)
          | ite8(cc_v(), (u8)0x40, (u8)0x00)
          | 0x20
@@ -481,20 +859,20 @@ struct machine {
 
     bool is_constant = (uint8_t)(ins.payload_type & instruction_payload_type::CONST_FLAG);
 
-    // Get some useful values for the instruction implementations.
-    const u16 absolute_payload = _initial_state.absolute(ins.payload, is_constant);
-    const u8 zp_payload = _initial_state.zp(ins.payload & 0xFF, is_constant);
-    const u8 immediate_payload = _initial_state.immediate(ins.payload & 0xFF, is_constant);
-    const u8 upper_payload = _initial_state.zp(ins.payload >> 8, is_constant);
-    const u8 relative_payload = _initial_state.relative(ins.payload & 0xFF, is_constant);
-
     // The address the instruction is working on
-    u16 absolute_var = absolute_payload;
-    // The value the instruction is working on
-    u8 immediate_var = immediate_payload;
+    u16 absolute_var = 0;
+    // the value the function is working on
+    std::function<u8()> immediate_var = [this, &absolute_var]() { return read(absolute_var); };
+
+    u16 branch_if_bit_address = 0;
+
+    
 
     // Increment the program counter by the instruction size.
     pc(pc() + instruction_size(ins.payload_type));
+    cycles(cycles() + 2);
+
+    boolean branch_on_different_page = false;
 
     // Apply the addressing mode to the instruction payload
     switch(ins.payload_type) {
@@ -502,113 +880,265 @@ struct machine {
       // nothing to do
       break;
     case instruction_payload_type::RELATIVE:
-    case instruction_payload_type::RELATIVE_CONST:
+    case instruction_payload_type::RELATIVE_CONST: {
+      // for branches, the target is an 8 bit signed value relative to
+      // the current pc.
+      u8 relative_payload = _initial_state.relative(ins.payload, is_constant);
       absolute_var = ite16(
         relative_payload >= 0x80,
         pc() - 0x100 + u16(relative_payload),
         pc() + u16(relative_payload)
       );
+      branch_on_different_page = hibyte(absolute_var) != hibyte(pc());
       break;
+      }
     case instruction_payload_type::ABSOLUTE:
     case instruction_payload_type::ABSOLUTE_CONST:
-      absolute_var = absolute_payload;
+      absolute_var = _initial_state.absolute(ins.payload, is_constant);
+      cycles(cycles() + 2);
+      break;
+    case instruction_payload_type::RMW_ABSOLUTE:
+    case instruction_payload_type::RMW_ABSOLUTE_CONST:
+      absolute_var = _initial_state.absolute(ins.payload, is_constant);
+      cycles(cycles() + 4);
       break;
     case instruction_payload_type::ABSOLUTE_X:
-    case instruction_payload_type::ABSOLUTE_X_CONST:
+    case instruction_payload_type::ABSOLUTE_X_CONST: {
+      u16 absolute_payload = _initial_state.absolute(ins.payload, is_constant);
       absolute_var = absolute_payload + u16(x());
+      // add a cycle if crossing a page boundary.
+      cycles(cycles() + 2 + u16(hibyte(absolute_payload) != hibyte(absolute_var)));
       break;
+      }
+    case instruction_payload_type::RMW_ABSOLUTE_X:
+    case instruction_payload_type::RMW_ABSOLUTE_X_CONST: {
+      u16 absolute_payload = _initial_state.absolute(ins.payload, is_constant);
+      absolute_var = absolute_payload + u16(x());
+      if (FASTER_RMW && ins.name != instruction_name::INC && ins.name != instruction_name::DEC) {
+        cycles(cycles() + 4 + u16(hibyte(absolute_payload) != hibyte(absolute_var)));
+      } else {
+        cycles(cycles() + 5);
+      }
+      break;
+      }
     case instruction_payload_type::ABSOLUTE_Y:
-    case instruction_payload_type::ABSOLUTE_Y_CONST:
+    case instruction_payload_type::ABSOLUTE_Y_CONST: {
+      u16 absolute_payload = _initial_state.absolute(ins.payload, is_constant);
       absolute_var = absolute_payload + u16(y());
+      // add a cycle if crossing a page boundary.
+      cycles(cycles() + 2 + u16(hibyte(absolute_payload) != hibyte(absolute_var)));
       break;
+      }
     case instruction_payload_type::X_INDIRECT:
-    case instruction_payload_type::X_INDIRECT_CONST:
-      // lda (addr, x)
-      absolute_var = from_bytes(read(u16(u8(zp_payload + x() + 1))),
-                                read(u16(u8(zp_payload + x()))));
+    case instruction_payload_type::X_INDIRECT_CONST: {
+      u8 zp_payload = _initial_state.zp(ins.payload, is_constant);
+      // lda (addr, x). This wraps within the zero page.
+      absolute_var = from_bytes(read(u16(zp_payload + x() + 1)),
+                                read(u16(zp_payload + x())));
+      cycles(cycles() + 4);
       break;
+      }
     case instruction_payload_type::INDIRECT_Y:
-    case instruction_payload_type::INDIRECT_Y_CONST:
-      // lda (addr), y
-      absolute_var = from_bytes(read(u16(u8(zp_payload + 1))),
-                                read(u16(zp_payload))) + u16(y());
+    case instruction_payload_type::INDIRECT_Y_CONST: {
+      u8 zp_payload = _initial_state.zp(ins.payload, is_constant);
+      // lda (addr), y. 
+      u16 absolute_payload = from_bytes(read(u16(zp_payload + 1)),
+                                read(u16(zp_payload)));
+      absolute_var = absolute_payload + u16(y());
+      // add a cycle if crossing a page boundary.
+      cycles(cycles() + 3 + u16(hibyte(absolute_payload) != hibyte(absolute_var)));
       break;
+      }
     case instruction_payload_type::ZERO_PAGE:
     case instruction_payload_type::ZERO_PAGE_CONST:
-      absolute_var = u16(zp_payload);
+      absolute_var = u16(_initial_state.zp(ins.payload, is_constant));
+      cycles(cycles() + 1);
+      break;
+    case instruction_payload_type::RMW_ZERO_PAGE:
+    case instruction_payload_type::RMW_ZERO_PAGE_CONST:
+      absolute_var = u16(_initial_state.zp(ins.payload, is_constant));
+      cycles(cycles() + 3);
       break;
     case instruction_payload_type::ZERO_PAGE_X:
     case instruction_payload_type::ZERO_PAGE_X_CONST:
-      absolute_var = u16(u8(zp_payload + x()));
+      absolute_var = u16(_initial_state.zp(ins.payload, is_constant) + x());
+      cycles(cycles() + 2);      
+      break;
+    case instruction_payload_type::RMW_ZERO_PAGE_X:
+    case instruction_payload_type::RMW_ZERO_PAGE_X_CONST:
+      absolute_var = u16(_initial_state.zp(ins.payload, is_constant) + x());
+      cycles(cycles() + 4);      
       break;
     case instruction_payload_type::ZERO_PAGE_Y:
     case instruction_payload_type::ZERO_PAGE_Y_CONST:
-      absolute_var = u16(u8(zp_payload + y()));
+      absolute_var = u16(_initial_state.zp(ins.payload, is_constant) + y());
+      cycles(cycles() + 2);
       break;
     case instruction_payload_type::IMMEDIATE:
     case instruction_payload_type::IMMEDIATE_CONST:
-      immediate_var = immediate_payload;
+      immediate_var = [this, &ins, &is_constant]() {
+        return _initial_state.immediate(ins.payload, is_constant);
+      };
+      break;
+    case instruction_payload_type::SPECIAL_IMMEDIATE:
+      immediate_var = [this, &ins]() {
+        return _initial_state.special(ins.payload);
+      };
       break;
     case instruction_payload_type::INDIRECT_ABSOLUTE:
     case instruction_payload_type::INDIRECT_ABSOLUTE_CONST:
       {
-      auto hi = HAS_JUMP_INDIRECT_BUG
+      absolute_var = _initial_state.absolute(ins.payload, is_constant);
+      // On the original 6502, jmp ($xxFF) will not properly
+      // increment the high byte when getting the high byte of
+      // the address.
+      u16 hi = HAS_JUMP_INDIRECT_BUG
         ? (absolute_var & 0xFF00) | ((absolute_var + 1) & 0xFF)
         : absolute_var + 1;
       absolute_var = from_bytes(read(hi), read(absolute_var));
+      // overestimate the length. The implementation of JMP will correct to 5 or 6 cycles total.
+      cycles(cycles() + (HAS_JUMP_INDIRECT_BUG ? 4 : 5));
       break;
       }
     case instruction_payload_type::X_INDIRECT_ABSOLUTE:
-    case instruction_payload_type::X_INDIRECT_ABSOLUTE_CONST:
+    case instruction_payload_type::X_INDIRECT_ABSOLUTE_CONST: {
+      // e.g. lda ($xxxx, x)
+      absolute_var = _initial_state.absolute(ins.payload, is_constant) + u16(x());
       absolute_var = from_bytes(
-        read(absolute_payload + u16(x()) + 1),
-        read(absolute_payload + u16(x())));
+        read(absolute_var + 1),
+        read(absolute_var));
+      cycles(cycles() + 4);
       break;
+      }
     case instruction_payload_type::ZERO_PAGE_INDIRECT:
-    case instruction_payload_type::ZERO_PAGE_INDIRECT_CONST:
+    case instruction_payload_type::ZERO_PAGE_INDIRECT_CONST: {
+      u8 zp_payload = _initial_state.zp(ins.payload, is_constant);
+      // e.g. lda ($xx)
       absolute_var = from_bytes(read(u16((zp_payload + 1) & 0xFF)),
                                 read(u16(zp_payload)));
+      cycles(cycles() + 3);
       break;
+      }
     case instruction_payload_type::BRANCH_IF_BIT:
-    case instruction_payload_type::BRANCH_IF_BIT_CONST:
+    case instruction_payload_type::BRANCH_IF_BIT_CONST: {
+      u8 relative_payload = _initial_state.relative(ins.payload & 0xFF, is_constant);
       absolute_var = ite16(
         relative_payload >= 0x80,
         pc() - 0x100 + u16(relative_payload),
         pc() + u16(relative_payload)
       );
-      immediate_var = upper_payload;
+      branch_if_bit_address = u16(_initial_state.zp(ins.payload >> 8, is_constant));
+      branch_on_different_page = hibyte(absolute_var) != hibyte(pc());
+      cycles(cycles() + 3);
       break;
+      }
+    case instruction_payload_type::SOFTWARE_STACK:
     case instruction_payload_type::SOFTWARE_STACK_CONST:
-      absolute_var = u16(_initial_state.software_stack() + x() + (ins.payload & 0xFF));
+      // e.g. lda stack + payload, x -- using x as a software stack pointer
+      // at a zero page address.
+      absolute_var = u16(_initial_state.software_stack(ins.payload, is_constant) + x());
+      cycles(cycles() + 2);
       break;
+    case instruction_payload_type::SOFTWARE_STACK_INDIRECT:
     case instruction_payload_type::SOFTWARE_STACK_INDIRECT_CONST: {
-      // e.g. lda (stack + payload, x)
-      u8 addr = _initial_state.software_stack() + x() + (ins.payload & 0xFF);
-      absolute_var = from_bytes(read(u16(addr + 1)),
+      // e.g. lda (stack + payload, x) -- using x as a software stack
+      // pointer at a zero page address
+      u8 addr = _initial_state.software_stack(ins.payload, is_constant);
+      absolute_var = from_bytes(read(u16(addr + x() + 1)),
                                 read(u16(addr + x())));
+      cycles(cycles() + 4);
       break;
       }
     case instruction_payload_type::KNOWN_SUBROUTINE_CONST:
       // e.g. jsr subroutine2
       absolute_var = _initial_state.known_subroutine(ins.payload);
+      cycles(cycles() + 2); // as if an absolute fetch
       break;
-    case instruction_payload_type::SIZE_2:
-    case instruction_payload_type::SIZE_3:
+    case instruction_payload_type::ZERO_PAGE_TEMP:
+    case instruction_payload_type::ZERO_PAGE_TEMP_CONST:
+      // e.g. lda temp+offset0
+      absolute_var = u16(_initial_state.temp(ins.payload, is_constant));
+      if (ASSUME_VALID_TEMP_USAGE) {
+        assume(absolute_var >= u16(_initial_state.temp()));
+        assume(absolute_var < u16(_initial_state.temp() + TEMP_SIZE));
+      }
+      cycles(cycles() + 1);
+      break;
+    case instruction_payload_type::RMW_ZERO_PAGE_TEMP:
+    case instruction_payload_type::RMW_ZERO_PAGE_TEMP_CONST:
+      // e.g. inc temp+offset0
+      absolute_var = u16(_initial_state.temp(ins.payload, is_constant));
+      if (ASSUME_VALID_TEMP_USAGE) {
+        assume(absolute_var >= u16(_initial_state.temp()));
+        assume(absolute_var < u16(_initial_state.temp() + TEMP_SIZE));
+      }
+      cycles(cycles() + 3);
+      break;
+    case instruction_payload_type::ZERO_PAGE_X_TEMP:
+    case instruction_payload_type::ZERO_PAGE_X_TEMP_CONST:
+      absolute_var = u16(_initial_state.temp(ins.payload, is_constant) + x());
+      if (ASSUME_VALID_TEMP_USAGE) {
+        assume(absolute_var >= u16(_initial_state.temp()));
+        assume(absolute_var < u16(_initial_state.temp() + TEMP_SIZE));
+      }
+      cycles(cycles() + 2);
+      break;
+    case instruction_payload_type::RMW_ZERO_PAGE_X_TEMP:
+    case instruction_payload_type::RMW_ZERO_PAGE_X_TEMP_CONST:
+      absolute_var = u16(_initial_state.temp(ins.payload, is_constant) + x());
+      if (ASSUME_VALID_TEMP_USAGE) {
+        assume(absolute_var >= u16(_initial_state.temp()));
+        assume(absolute_var < u16(_initial_state.temp() + TEMP_SIZE));
+      }
+      cycles(cycles() + 4);
+      break;
+    case instruction_payload_type::ZERO_PAGE_Y_TEMP:
+    case instruction_payload_type::ZERO_PAGE_Y_TEMP_CONST:
+      absolute_var = u16(_initial_state.temp(ins.payload, is_constant) + y());
+      if (ASSUME_VALID_TEMP_USAGE) {
+        assume(absolute_var >= u16(_initial_state.temp()));
+        assume(absolute_var < u16(_initial_state.temp() + TEMP_SIZE));
+      }
+      cycles(cycles() + 2);
+      break;
+    case instruction_payload_type::INDIRECT_Y_TEMP:
+    case instruction_payload_type::INDIRECT_Y_TEMP_CONST: {
+      // lda (temp+offset0), y.
+      u16 lo = u16(_initial_state.temp(ins.payload, is_constant));
+      u16 hi = u16(_initial_state.temp(ins.payload, is_constant) + 1);
+      if (ASSUME_VALID_TEMP_USAGE) {
+        assume(hi != 0);
+        assume(lo >= u16(_initial_state.temp()));
+        assume(hi < u16(_initial_state.temp() + TEMP_SIZE));
+      }
+      u16 absolute_payload = from_bytes(read(hi),
+                                read(lo));
+      absolute_var = absolute_payload + u16(y());
+      cycles(cycles() + 3 + u16(hibyte(absolute_payload) != hibyte(absolute_var)));
+      break;
+      }
+    case instruction_payload_type::X_INDIRECT_TEMP:
+    case instruction_payload_type::X_INDIRECT_TEMP_CONST: {
+      u16 lo = u16(_initial_state.temp(ins.payload, is_constant) + x());
+      u16 hi = u16(_initial_state.temp(ins.payload, is_constant) + x() + 1);
+      if (ASSUME_VALID_TEMP_USAGE) {
+        assume(lo >= u16(_initial_state.temp()));
+        assume(hi >= u16(_initial_state.temp()));
+        assume(lo < u16(_initial_state.temp() + TEMP_SIZE));
+        assume(hi < u16(_initial_state.temp() + TEMP_SIZE));
+      }
+      // lda (temp + offset0, x).
+      absolute_var = from_bytes(read(hi),
+                                read(lo));
+      cycles(cycles() + 4);
+      break;
+      }
     case instruction_payload_type::CONST_FLAG:
       assert(false);
     }
 
-    // If we aren't using the immediate operand, then read the address
-    // and store it there.
-    if (ins.payload_type != instruction_payload_type::IMMEDIATE
-    && ins.payload_type != instruction_payload_type::IMMEDIATE_CONST
-    && ins.payload_type != instruction_payload_type::BRANCH_IF_BIT
-    && ins.payload_type != instruction_payload_type::BRANCH_IF_BIT_CONST) {
-      immediate_var = read(absolute_var);
-    }
-
     switch (ins.name) {
-    case instruction_name::UNKNOWN: exit(0xFF); break;
+    case instruction_name::UNKNOWN: assert(false); break;
 
     // These instructions do nothing, or put the processor
     // in a state that it can't recover from on its own.
@@ -617,12 +1147,12 @@ struct machine {
     case instruction_name::NOP:
     case instruction_name::NONE: break;
 
-    case instruction_name::AND: a(set_sz(a() & immediate_var)); break;
-    case instruction_name::ORA: a(set_sz(a() | immediate_var)); break;
-    case instruction_name::EOR: a(set_sz(a() ^ immediate_var)); break;
-    case instruction_name::LDA: a(set_sz(immediate_var)); break;
-    case instruction_name::LDX: x(set_sz(immediate_var)); break;
-    case instruction_name::LDY: y(set_sz(immediate_var)); break;
+    case instruction_name::AND: a(set_sz(a() & immediate_var())); break;
+    case instruction_name::ORA: a(set_sz(a() | immediate_var())); break;
+    case instruction_name::EOR: a(set_sz(a() ^ immediate_var())); break;
+    case instruction_name::LDA: a(set_sz(immediate_var())); break;
+    case instruction_name::LDX: x(set_sz(immediate_var())); break;
+    case instruction_name::LDY: y(set_sz(immediate_var())); break;
     case instruction_name::TXA: a(set_sz(x())); break;
     case instruction_name::TAX: x(set_sz(a())); break;
     case instruction_name::TYA: a(set_sz(y())); break;
@@ -644,38 +1174,42 @@ struct machine {
       if (ins.payload_type == instruction_payload_type::NONE) {
         a(set_sz(a() + 1));
       } else {
-        write(absolute_var, set_sz(immediate_var + 1));
+        write(absolute_var, set_sz(immediate_var() + 1));
       }
       break;
     case instruction_name::DEC:
       if (ins.payload_type == instruction_payload_type::NONE) {
         a(set_sz(a() - 1));
       } else {
-        write(absolute_var, set_sz(immediate_var - 1));
+        write(absolute_var, set_sz(immediate_var() - 1));
       }
       break;
     case instruction_name::BIT:
-      cc_z((immediate_var & a()) == 0);
-      cc_s((immediate_var & 0x80) == 0x80);
-      cc_v((immediate_var & 0x40) == 0x40);
+      cc_z((immediate_var() & a()) == 0);
+      if (ins.payload_type != instruction_payload_type::IMMEDIATE
+        && ins.payload_type != instruction_payload_type::IMMEDIATE_CONST
+        && ins.payload_type != instruction_payload_type::SPECIAL_IMMEDIATE) {
+          cc_s((immediate_var() & 0x80) == 0x80);
+          cc_v((immediate_var() & 0x40) == 0x40);
+        }
       break;
     case instruction_name::ASL:
       if (ins.payload_type == instruction_payload_type::NONE) {
         cc_c((a() & 0x80) == 0x80);
         a(set_sz(a() << 1));
       } else {
-        cc_c((immediate_var & 0x80) == 0x80);
-        write(absolute_var, set_sz(immediate_var << 1));
+        cc_c((immediate_var() & 0x80) == 0x80);
+        write(absolute_var, set_sz(immediate_var() << 1));
       }
       break;
     case instruction_name::ROL:
       if (ins.payload_type == instruction_payload_type::NONE) {
-        auto val = (a() << 1) | (u8)cc_c();
+        u8 val = (a() << 1) | (u8)cc_c();
         cc_c((a() & 0x80) == 0x80);
         a(set_sz(val));
       } else {
-        auto val = (immediate_var << 1) | (u8)cc_c();
-        cc_c((immediate_var & 0x80) == 0x80);
+        u8 val = (immediate_var() << 1) | (u8)cc_c();
+        cc_c((immediate_var() & 0x80) == 0x80);
         write(absolute_var, set_sz(val));
       }
       break;
@@ -684,18 +1218,18 @@ struct machine {
         cc_c((a() & 0x01) == 0x01);
         a(set_sz(a() >> 1));
       } else {
-        cc_c((immediate_var & 0x01) == 0x01);
-        write(absolute_var, set_sz(immediate_var >> 1));
+        cc_c((immediate_var() & 0x01) == 0x01);
+        write(absolute_var, set_sz(immediate_var() >> 1));
       }
       break;
     case instruction_name::ROR:
       if (ins.payload_type == instruction_payload_type::NONE) {
-        auto val = (a() >> 1) | ite8(cc_c(), (u8)0x80, (u8)0x00);
+        u8 val = (a() >> 1) | ite8(cc_c(), (u8)0x80, (u8)0x00);
         cc_c((a() & 0x01) == 0x01);
         a(set_sz(val));
       } else {
-        auto val = (immediate_var >> 1) | ite8(cc_c(), (u8)0x80, (u8)0x00);
-        cc_c((immediate_var & 0x01) == 0x01);
+        u8 val = (immediate_var() >> 1) | ite8(cc_c(), (u8)0x80, (u8)0x00);
+        cc_c((immediate_var() & 0x01) == 0x01);
         write(absolute_var, set_sz(val));
       }
       break;
@@ -717,11 +1251,11 @@ struct machine {
           // Each nybble of both operands must be 0-9
           // for a valid BCD result.
           assume(
-            !cc_d() || (
-              (a() & 0xF) < 0xA
-              && (a() & 0xF0) < 0xA0
-              && (immediate_var & 0xF) < 0xA
-              && (immediate_var & 0xF0) < 0xA0));
+            !_cc_d || (
+              (_a & 0xF) < 0xA
+              && (_a & 0xF0) < 0xA0
+              && (immediate_var() & 0xF) < 0xA
+              && (immediate_var() & 0xF0) < 0xA0));
         }
       
         if (USE_65c02_DECIMAL) {
@@ -729,9 +1263,9 @@ struct machine {
           // ensure the flags are more meaningful, and it
           // has different behavior for invalid decimal operands.
 
-          u16 src = (u16)immediate_var;
+          u16 src = (u16)immediate_var();
           u16 bdiff = u16(a()) - src + u16(cc_c()) - 1;
-          cc_v(((a() ^ lobyte(bdiff)) & (a() ^ immediate_var) & 0x80) == 0x80);
+          cc_v(((a() ^ lobyte(bdiff)) & (a() ^ immediate_var()) & 0x80) == 0x80);
 
           u16 ddiff = bdiff;
           ddiff = ddiff - ite16(ddiff > 0xFF, (u16)0x60, (u16)0);
@@ -741,32 +1275,34 @@ struct machine {
           u16 diff = ite16(cc_d(), ddiff, bdiff);
           cc_c(u16(a()) + u16(cc_c()) - 1 >= src);
           a(set_sz(lobyte(diff)));
+          // fixing the flags requires an extra cycle if the decimal flag is set.
+          cycles(cycles() + u16(cc_d()));
         } else {
             // Difference if decimal
-            u16 ddiff = u16(a() & 0xf) - u16(immediate_var & 0xf) - u16(!cc_c()); 
+            u16 ddiff = u16(a() & 0xf) - u16(immediate_var() & 0xf) - u16(!cc_c()); 
             ddiff = ite16(
               (ddiff & 0x10) == 0x10,
-              ((ddiff - 6) & 0xF) | ((u16(a()) & 0xF0) - (u16(immediate_var) & 0xF0) - 0x10),
-              (ddiff & 0xF) | ((u16(a()) & 0xF0) - (u16(immediate_var) & 0xF0))
+              ((ddiff - 6) & 0xF) | ((u16(a()) & 0xF0) - (u16(immediate_var()) & 0xF0) - 0x10),
+              (ddiff & 0xF) | ((u16(a()) & 0xF0) - (u16(immediate_var()) & 0xF0))
             );
 
             ddiff = ddiff - ite16((ddiff & 0x100) == 0x100, u16(0x60), u16(0));                
 
             // Difference if binary
-            u16 bdiff = u16(a()) - (u16)immediate_var - u16(!cc_c());
+            u16 bdiff = u16(a()) - (u16)immediate_var() - u16(!cc_c());
 
             // TODO: this matches VICE, but are the flags really just based
             // on the binary difference?
             cc_c(bdiff < 0x100);
             set_sz(lobyte(bdiff));
-            cc_v(((a() ^ lobyte(bdiff)) & (a() ^ immediate_var) & 0x80) == 0x80);
+            cc_v(((a() ^ lobyte(bdiff)) & (a() ^ immediate_var()) & 0x80) == 0x80);
 
             u16 diff = ite16(cc_d(), ddiff, bdiff);
             a(lobyte(diff));
         }
       } else {
-        u16 diff = u16(a()) - (u16)immediate_var - u16(!cc_c());
-        cc_v(((lobyte(diff) ^ a()) & (a() ^ immediate_var) & 0x80) == 0x80);
+        u16 diff = u16(a()) - (u16)immediate_var() - u16(!cc_c());
+        cc_v(((lobyte(diff) ^ a()) & (a() ^ immediate_var()) & 0x80) == 0x80);
         cc_c(diff < 0x100);
         a(set_sz(lobyte(diff)));
       }
@@ -779,11 +1315,11 @@ struct machine {
           // Each nybble of both operands must be 0-9
           // for a valid BCD result.
           assume(
-            !cc_d() || (
-              (a() & 0xF) < 0xA
-              && (a() & 0xF0) < 0xA0
-              && (immediate_var & 0xF) < 0xA
-              && (immediate_var & 0xF0) < 0xA0));
+            !_cc_d || (
+              (_a & 0xF) < 0xA
+              && (_a & 0xF0) < 0xA0
+              && (immediate_var() & 0xF) < 0xA
+              && (immediate_var() & 0xF0) < 0xA0));
         }
 
         if (USE_65c02_DECIMAL) {
@@ -792,17 +1328,17 @@ struct machine {
           // has different behavior for invalid decimal operands.
           
           // Sum if decimal mode
-          u16 dsumlo = u16((a() & 0xF) + (immediate_var & 0xF) + (u8)cc_c());
-          u16 dsumhi = u16((a() & 0xF0) + (immediate_var & 0xF0));
+          u16 dsumlo = u16((a() & 0xF) + (immediate_var() & 0xF) + (u8)cc_c());
+          u16 dsumhi = u16((a() & 0xF0) + (immediate_var() & 0xF0));
           boolean t = dsumlo > 9;
           dsumlo = dsumlo + ite16(t, (u16)6, (u16)0);
           dsumhi = dsumhi + ite16(t, (u16)0x10, (u16)0);
 
           // Sum if binary mode
-          u16 bsum = u16(immediate_var) + u16(a()) + u16(cc_c());
+          u16 bsum = u16(immediate_var()) + u16(a()) + u16(cc_c());
 
           u16 sum = ite16(cc_d(), dsumhi, bsum);
-          cc_v(((a() ^ lobyte(sum)) & (a() ^ immediate_var) & 0x80) == 0x80);
+          cc_v(((a() ^ lobyte(sum)) & (a() ^ immediate_var()) & 0x80) == 0x80);
           dsumhi = dsumhi + ite16(dsumhi > 0x90, (u16)0x60, (u16)0);
           
           sum = ite16(cc_d(), dsumhi, bsum);
@@ -811,20 +1347,22 @@ struct machine {
           u16 dsum = (dsumlo & 0xF) + (dsumhi & 0xF0);
           sum = ite16(cc_d(), dsum, bsum);
           a(set_sz(lobyte(sum)));
+          // fixing the flags requires an extra cycle if the decimal flag is set.
+          cycles(cycles() + u16(cc_d()));
         } else {
           // Sum if decimal mode
-          u16 dsum = u16((a() & 0xF) + (immediate_var & 0xF) + (u8)cc_c());
+          u16 dsum = u16((a() & 0xF) + (immediate_var() & 0xF) + (u8)cc_c());
           dsum = dsum + ite16(dsum > 0x9, (u16)6, (u16)0);
-          dsum = (dsum & 0xF) + u16(a() & 0xF0) + u16(immediate_var & 0xF0) + ite16(dsum > 0xF, (u16)0x10, (u16)0);
+          dsum = (dsum & 0xF) + u16(a() & 0xF0) + u16(immediate_var() & 0xF0) + ite16(dsum > 0xF, (u16)0x10, (u16)0);
 
           // Sum if binary mode
-          u16 bsum = u16(immediate_var) + u16(a()) + u16(cc_c());
+          u16 bsum = u16(immediate_var()) + u16(a()) + u16(cc_c());
 
           u16 sum = ite16(cc_d(), dsum, bsum);
 
           cc_z(lobyte(bsum) == 0); // Zero flag is always based on binary sum
           cc_s((sum & 0x80) == 0x80);
-          cc_v(((lobyte(sum) ^ a()) & (lobyte(sum) ^ immediate_var) & 0x80) == 0x80);
+          cc_v(((lobyte(sum) ^ a()) & (lobyte(sum) ^ immediate_var()) & 0x80) == 0x80);
 
           // Perform wrap around if greater than 99
           dsum = dsum + ite16((dsum & 0x1F0) > 0x90, (u16)0x60, (u16)0);
@@ -834,10 +1372,10 @@ struct machine {
           a(lobyte(sum));
         }
       } else {
-        auto carry = u16(cc_c());
-        auto sum = u16(immediate_var) + u16(a()) + u16(carry);
+        u16 carry = u16(cc_c());
+        u16 sum = u16(immediate_var()) + u16(a()) + carry;
 
-        cc_v(((lobyte(sum) ^ a()) & (lobyte(sum) ^ immediate_var) & 0x80) == 0x80);
+        cc_v(((lobyte(sum) ^ a()) & (lobyte(sum) ^ immediate_var()) & 0x80) == 0x80);
         cc_c(sum > 0xFF);
         a(set_sz(lobyte(sum)));
       }
@@ -845,25 +1383,30 @@ struct machine {
       break;
       }
     case instruction_name::CMP:
-      cc_c(a() >= immediate_var);
-      cc_s(u8(a() - immediate_var) >= 0x80);
-      cc_z(a() == immediate_var);
+      cc_c(a() >= immediate_var());
+      cc_s(u8(a() - immediate_var()) >= 0x80);
+      cc_z(a() == immediate_var());
       break;
     case instruction_name::CPX:
-      cc_c(x() >= immediate_var);
-      cc_s(u8(x() - immediate_var) >= 0x80);
-      cc_z(x() == immediate_var);
+      cc_c(x() >= immediate_var());
+      cc_s(u8(x() - immediate_var()) >= 0x80);
+      cc_z(x() == immediate_var());
       break;
     case instruction_name::CPY:
-      cc_c(y() >= immediate_var);
-      cc_s(u8(y() - immediate_var) >= 0x80);
-      cc_z(y() == immediate_var);
+      cc_c(y() >= immediate_var());
+      cc_s(u8(y() - immediate_var()) >= 0x80);
+      cc_z(y() == immediate_var());
       break;
-    case instruction_name::JMP: exit(absolute_var); break;
+    case instruction_name::JMP:
+      // jmp is only 3 cycles, faster than expected for an absolute instruction.
+      cycles(cycles() - 1);
+      exit(absolute_var);
+      break;
     case instruction_name::RTI: {
       byte_to_flags(pull());
       u8 lo = pull();
       u8 hi = pull();
+      cycles(cycles() - 2); // each pull contributes 2 cycles, but we only want 6 total.
       exit(from_bytes(hi, lo));
       break;
       }
@@ -873,14 +1416,15 @@ struct machine {
       exit(from_bytes(hi, lo) + 1);
       break;
       }
-    case instruction_name::BPL: exit_if(!cc_s(), absolute_var); break;
-    case instruction_name::BMI: exit_if(cc_s(),  absolute_var); break;
-    case instruction_name::BVS: exit_if(cc_v(),  absolute_var); break;
-    case instruction_name::BVC: exit_if(!cc_v(), absolute_var); break;
-    case instruction_name::BCC: exit_if(!cc_c(), absolute_var); break;
-    case instruction_name::BCS: exit_if(cc_c(),  absolute_var); break;
-    case instruction_name::BEQ: exit_if(cc_z(),  absolute_var); break;
-    case instruction_name::BNE: exit_if(!cc_z(), absolute_var); break;
+    case instruction_name::BRA: branch_if(true,    absolute_var, branch_on_different_page); break;
+    case instruction_name::BPL: branch_if(!cc_s(), absolute_var, branch_on_different_page); break;
+    case instruction_name::BMI: branch_if(cc_s(),  absolute_var, branch_on_different_page); break;
+    case instruction_name::BVS: branch_if(cc_v(),  absolute_var, branch_on_different_page); break;
+    case instruction_name::BVC: branch_if(!cc_v(), absolute_var, branch_on_different_page); break;
+    case instruction_name::BCC: branch_if(!cc_c(), absolute_var, branch_on_different_page); break;
+    case instruction_name::BCS: branch_if(cc_c(),  absolute_var, branch_on_different_page); break;
+    case instruction_name::BEQ: branch_if(cc_z(),  absolute_var, branch_on_different_page); break;
+    case instruction_name::BNE: branch_if(!cc_z(), absolute_var, branch_on_different_page); break;
     case instruction_name::JSR:
       push(hibyte(pc() - 1));
       push(lobyte(pc() - 1));
@@ -892,83 +1436,88 @@ struct machine {
       push(lobyte(pc() + 1));
       push(flags_to_byte() | 0x10);
       cc_i(true);
+      cycles(cycles() + 2);
       exit(from_bytes(read(0xFFFF), read(0xFFFE)));
       break;
     case instruction_name::LAX:
-      a(set_sz(immediate_var));
+      a(set_sz(immediate_var()));
       x(a());
       break;
     case instruction_name::SAX: write(absolute_var, a() & x()); break;
-    case instruction_name::DCM:
-      immediate_var = immediate_var - 1;
-      write(absolute_var, set_sz(immediate_var));
-      cc_c(a() >= immediate_var);
-      cc_s(a() - immediate_var >= 0x80);
-      cc_z(a() == immediate_var);
+    case instruction_name::DCM: {
+      u8 immediate = immediate_var() - 1;
+      write(absolute_var, set_sz(immediate));
+      cc_c(a() >= immediate);
+      cc_s(a() - immediate >= 0x80);
+      cc_z(a() == immediate);
       break;
+      }
     case instruction_name::INS: {
-      immediate_var = immediate_var + 1;
-      write(absolute_var, set_sz(immediate_var));
-      immediate_var = immediate_var ^ 0xFF;
-      auto sum = u16(immediate_var) + u16(a()) + u16(cc_c());
-      cc_v(((lobyte(sum) ^ a()) & (lobyte(sum) ^ immediate_var) & 0x80) == 0x80);
+      u8 immediate = immediate_var();
+      immediate = immediate + 1;
+      write(absolute_var, set_sz(immediate));
+      immediate = immediate ^ 0xFF;
+      u16 sum = u16(immediate) + u16(a()) + u16(cc_c());
+      cc_v(((lobyte(sum) ^ a()) & (lobyte(sum) ^ immediate) & 0x80) == 0x80);
       cc_c(hibyte(sum) == 0x01);
       a(set_sz(lobyte(sum)));
       break;
       }
-    case instruction_name::SLO:
-      cc_c((immediate_var & 0x80) == 0x80);
-      immediate_var = immediate_var << 1;
-      write(absolute_var, set_sz(immediate_var));
-      a(set_sz(a() | immediate_var));
+    case instruction_name::SLO: {
+      cc_c((immediate_var() & 0x80) == 0x80);
+      u8 immediate = immediate_var() << 1;
+      write(absolute_var, set_sz(immediate));
+      a(set_sz(a() | immediate));
       break;
+      }
     case instruction_name::RLA: {
-      auto val = (immediate_var << 1) | ite8(cc_c(), (u8)1, (u8)0);
-      cc_c((immediate_var & 0x80) == 0x80);
+      u8 val = (immediate_var() << 1) | ite8(cc_c(), (u8)1, (u8)0);
+      cc_c((immediate_var() & 0x80) == 0x80);
       write(absolute_var, set_sz(val));
       a(set_sz(val & a()));
       break;
       }
-    case instruction_name::SRE:
-      cc_c((immediate_var & 0x01) == 0x01);
-      immediate_var = immediate_var >> 1;
-      write(absolute_var, set_sz(immediate_var));
-      a(set_sz(a() ^ immediate_var));
+    case instruction_name::SRE: {
+      cc_c((immediate_var() & 0x01) == 0x01);
+      u8 immediate = immediate_var() >> 1;
+      write(absolute_var, immediate);
+      a(set_sz(a() ^ immediate));
       break;
+      }
     case instruction_name::RRA: {
-      auto val = (immediate_var >> 1) | ite8(cc_c(), (u8)0x80, (u8)0x00);
-      cc_c((immediate_var & 0x01) == 0x01);
+      u8 val = (immediate_var() >> 1) | ite8(cc_c(), (u8)0x80, (u8)0x00);
+      cc_c((immediate_var() & 0x01) == 0x01);
       write(absolute_var, set_sz(val));
-      auto sum = u16(val) + u16(a()) + ite16(cc_c(), (u16)0x01, (u16)0x00);
+      u16 sum = u16(val) + u16(a()) + ite16(cc_c(), (u16)0x01, (u16)0x00);
       cc_v(((lobyte(sum) ^ a()) & (lobyte(sum) ^ val) & 0x80) == 0x80);
       cc_c(hibyte(sum) == 0x01);
       a(set_sz(lobyte(sum)));
       break;
       }
     case instruction_name::ALR: {
-      auto val = (a() & immediate_var) >> 1;
-      cc_c((a() & immediate_var & 0x01) == 0x01);
+      u8 val = (a() & immediate_var()) >> 1;
+      cc_c((a() & immediate_var() & 0x01) == 0x01);
       a(set_sz(val));
       break;
       }
     case instruction_name::ANC:
-      a(set_sz(a() & immediate_var));
+      a(set_sz(a() & immediate_var()));
       cc_c(cc_s());
       break;
     case instruction_name::ARR: {
-      a(set_sz(a() & immediate_var));
-      auto val = (a() >> 1) | ite8(cc_c(), (u8)0x80, (u8)0x00);
+      a(set_sz(a() & immediate_var()));
+      u8 val = (a() >> 1) | ite8(cc_c(), (u8)0x80, (u8)0x00);
       cc_c((val & 0x40) == 0x40);
-      auto bit6 = (val & 0x40) == 0x40;
-      auto bit5 = (val & 0x20) == 0x20;
+      boolean bit6 = (val & 0x40) == 0x40;
+      boolean bit5 = (val & 0x20) == 0x20;
       cc_v(bit6 ^ bit5);
       a(set_sz(val));
       break;
       }
     case instruction_name::AXS: {
-      auto xa = x() & a();
-      x(set_sz(xa - immediate_var));
-      cc_c(xa >= immediate_var);
+      u8 xa = x() & a();
+      x(set_sz(xa - immediate_var()));
+      cc_c(xa >= immediate_var());
       break;
       }
     case instruction_name::RMB0:
@@ -981,7 +1530,7 @@ struct machine {
     case instruction_name::RMB7: {
       uint8_t bit = (uint8_t)ins.name - (uint8_t)instruction_name::RMB0;
       uint8_t mask = (~(1 << bit)) & 0xFF;
-      write(absolute_var, immediate_var & mask);
+      write(absolute_var, immediate_var() & mask);
       break;
       }
     case instruction_name::SMB0:
@@ -993,7 +1542,7 @@ struct machine {
     case instruction_name::SMB6:
     case instruction_name::SMB7: {
       uint8_t bit = (uint8_t)ins.name - (uint8_t)instruction_name::RMB0;
-      write(absolute_var, immediate_var | (1 << bit));
+      write(absolute_var, immediate_var() | (1 << bit));
       break;
       }
     case instruction_name::BBR0:
@@ -1005,7 +1554,7 @@ struct machine {
     case instruction_name::BBR6:
     case instruction_name::BBR7: {
       uint8_t bit = (uint8_t)ins.name - (uint8_t)instruction_name::BBR0;
-      exit_if((immediate_var & (1 << bit)) == 0, absolute_var);
+      branch_if((read(branch_if_bit_address) & (1 << bit)) == 0, absolute_var, branch_on_different_page);
       break;
       }
     case instruction_name::BBS0:
@@ -1017,17 +1566,17 @@ struct machine {
     case instruction_name::BBS6:
     case instruction_name::BBS7: {
       uint8_t bit = (uint8_t)ins.name - (uint8_t)instruction_name::BBS0;
-      exit_if((immediate_var & (1 << bit)) != 0, absolute_var);
+      branch_if((read(branch_if_bit_address) & (1 << bit)) != 0, absolute_var, branch_on_different_page);
       break;
       }
     case instruction_name::TRB: {
-      cc_z((immediate_var & a()) == 0);
-      write(absolute_var, immediate_var & ~a());
+      cc_z((immediate_var() & a()) == 0);
+      write(absolute_var, immediate_var() & ~a());
       break;
       }
     case instruction_name::TSB: {
-      cc_z((immediate_var & a()) == 0);
-      write(absolute_var, immediate_var | a());
+      cc_z((immediate_var() & a()) == 0);
+      write(absolute_var, immediate_var() | a());
       break;
       }
     }
@@ -1039,7 +1588,7 @@ typedef machine<nuint8_t, nuint16_t, bool, hmemory, hash_initial_state> hmachine
 typedef machine<nuint8_t, nuint16_t, bool, cmemory, concrete_initial_state> cmachine;
 
 uint16_t read16(const uint8_t memory[256*256], const uint16_t ip) {
-  return memory[ip + 1] | (memory[ip + 2] << 8);
+  return memory[(ip + 1) & 0xFFFF] | (memory[(ip + 2) & 0xFFFF] << 8);
 }
 
 /**
@@ -1050,7 +1599,7 @@ uint16_t read_rel(const uint8_t memory[256*256], const uint16_t ip) {
   return memory[ip+1];
 }
 
-#define BYTE memory[pc+1]
+#define BYTE memory[(pc+1)&0xFFFF]
 #define ABS  read16(memory, pc)
 #define REL  read_rel(memory, pc)
 #define DR(name, payload_type, payload) { static_assert(instruction_payload_type::payload_type == instruction_payload_type::NONE || static_cast<uint8_t>(instruction_payload_type::payload_type & instruction_payload_type::CONST_FLAG), #payload_type " must be CONST"); return instruction(instruction_name::name, instruction_payload_type::payload_type, payload); }
@@ -1406,14 +1955,14 @@ int compare_abstract_and_concrete(char *rom) {
         z_machine.copy_from(c_machine);
 
         // Save the original memory state
-        auto original_memory = z_machine._memory.val;
+        z3::expr original_memory = z_machine._memory.val;
         // Run the instruction on both machines
         c_machine.run(ins);
         z_machine.run(ins);
         z3::solver solver(z3_ctx);
         // Add assertions for the memory locations which were read.
         for (int i = 0; i < c_machine._memory.n_read; i++) {
-          auto equal = z3::select(original_memory, c_machine._memory.addresses_read[i].val) == c_machine._memory.values_read[i].val;
+          z3::expr equal = z3::select(original_memory, c_machine._memory.addresses_read[i].val) == c_machine._memory.values_read[i].val;
           add_assertion(solver, equal);
         }
 
@@ -1438,7 +1987,7 @@ int compare_abstract_and_concrete(char *rom) {
         add_assertion(solver, z_machine.pc() == c_machine.pc().val);
         add_assertion(solver, z_machine._has_exited == c_machine._has_exited);
 
-        auto result = solver.check();
+        z3::check_result result = solver.check();
         if (result == z3::unsat) {
           std::cout << solver << std::endl;
           return 1;
@@ -1463,6 +2012,146 @@ int initialize() {
 int enumerate() {
 
   return 0;
+}
+
+enum struct compare_result_type : uint8_t {
+  cannot_satify = 1,
+  matching = 2,
+  different = 3,
+  unknown = 4
+};
+
+compare_result_type compare_from_check_result(z3::check_result result) {
+  if (result == z3::unsat) {
+    return compare_result_type::matching;
+  } else if (result == z3::sat) {
+    return compare_result_type::different;
+  } else {
+    return compare_result_type::unknown;
+  }
+}
+
+struct compare_result {
+  compare_result(compare_result_type _type) : type(_type) {}
+  compare_result(compare_result_type cc_s, compare_result_type cc_v, compare_result_type cc_i, compare_result_type cc_d, compare_result_type cc_c, compare_result_type cc_z)
+    : type(compare_result_type::matching), cc_s_matches(cc_s), cc_v_matches(cc_v),
+      cc_i_matches(cc_i), cc_d_matches(cc_d), cc_c_matches(cc_c), cc_z_matches(cc_z) {}
+
+  compare_result_type type;
+  compare_result_type cc_s_matches;
+  compare_result_type cc_v_matches;
+  compare_result_type cc_i_matches;
+  compare_result_type cc_d_matches;
+  compare_result_type cc_c_matches;
+  compare_result_type cc_z_matches;
+};
+
+inline std::ostream& operator<<(std::ostream& os, const compare_result& result)
+{
+  switch (result.type) {
+    case compare_result_type::cannot_satify:
+      os << "cannot_satisy"; return os;
+    case compare_result_type::different:
+      os << "different"; return os;
+    case compare_result_type::matching:
+      os << "matching("
+      << (result.cc_s_matches == compare_result_type::matching ? "s" : "S")
+      << (result.cc_v_matches == compare_result_type::matching ? "v" : "V")
+      << (result.cc_i_matches == compare_result_type::matching ? "i" : "I")
+      << (result.cc_d_matches == compare_result_type::matching ? "d" : "D")
+      << (result.cc_c_matches == compare_result_type::matching ? "c" : "C")
+      << (result.cc_z_matches == compare_result_type::matching ? "z" : "Z")
+      << ")";
+      return os;
+    case compare_result_type::unknown:
+      os << "unknown"; return os;
+  }
+  return os;
+}
+
+/**
+ * @brief Checks if the two zmachines have the same machine state.
+ * 
+ * @param a 
+ * @param b 
+ * @return z3::unsat if the results are the same
+ *   z3::sat if they are different, or z3::unknown
+ */
+compare_result compare(zmachine& a, zmachine& b) {
+  z3::solver solver(z3_ctx);
+  add_assertion(solver, a._assumptions);
+  add_assertion(solver, b._assumptions);
+  z3::check_result assumptions_check = solver.check();
+  if (assumptions_check == z3::unsat) {
+    return compare_result_type::cannot_satify;
+  } else if (assumptions_check == z3::unknown) {
+    return compare_result_type::unknown;
+  }
+  solver.push();
+  zbool assertions = false;
+  assertions = assertions || (a.a().val.simplify()    != b.a().val.simplify());
+  assertions = assertions || (a.x().val.simplify()    != b.x().val.simplify());
+  assertions = assertions || (a.y().val.simplify()    != b.y().val.simplify());
+  assertions = assertions || (a.sp().val.simplify()   != b.sp().val.simplify());
+
+  zuint16_t addr = z3_ctx.bv_const("addr", 16);
+  zbool special_memory = false;
+  if (ASSUME_VALID_STACK_USAGE) {
+    // Any memory in the stack page that isn't on the stack is irrelevant.
+    special_memory = special_memory || ((hibyte(addr) == 0x01) && (lobyte(addr) <= a.sp()));
+  }
+  if (ASSUME_VALID_TEMP_USAGE) {
+    // Any memory in the temp region is irrelevant.
+    special_memory = special_memory || (hibyte(addr) == 0 && lobyte(addr) >= a._initial_state.temp() && lobyte(addr) < a._initial_state.temp() + TEMP_SIZE);
+  }
+
+  // Compare the two memories, but treat the memory in special areas
+  // as always 0.
+  z3::expr a_memory = z3::ite(special_memory.val, z3_ctx.bv_val(0, 8), a._memory.read(addr).val).simplify();
+  z3::expr b_memory = z3::ite(special_memory.val, z3_ctx.bv_val(0, 8), b._memory.read(addr).val).simplify();
+  assertions = assertions || (a_memory != b_memory);
+
+  assertions = assertions || (a._has_exited.val.simplify() != b._has_exited.val.simplify());
+  assertions = assertions || (z3::ite(a._has_exited.val, a.pc().val, z3_ctx.bv_val(0, 16)).simplify() != z3::ite(b._has_exited.val, b.pc().val, z3_ctx.bv_val(0, 16)).simplify());
+
+  add_assertion(solver, assertions);
+
+  z3::check_result result = solver.check();
+  if (result == z3::sat) {
+    std::cout << assertions.val << std::endl;
+    std::cout << solver.get_model() << std::endl;
+  }
+  if (result == z3::sat) {
+    return compare_result_type::different;
+  } else if (result == z3::unsat) {
+    solver.pop();
+    solver.push();
+    solver.add(a.cc_s().val.simplify() != b.cc_s().val.simplify());
+    compare_result_type cc_s = compare_from_check_result(solver.check());
+    solver.pop();
+    solver.push();
+    solver.add(a.cc_v().val.simplify() != b.cc_v().val.simplify());
+    compare_result_type cc_v = compare_from_check_result(solver.check());
+    solver.pop();
+    solver.push();
+    solver.add(a.cc_i().val.simplify() != b.cc_i().val.simplify());
+    compare_result_type cc_i = compare_from_check_result(solver.check());
+    solver.pop();
+    solver.push();
+    solver.add(a.cc_d().val.simplify() != b.cc_d().val.simplify());
+    compare_result_type cc_d = compare_from_check_result(solver.check());
+    solver.pop();
+    solver.push();
+    solver.add(a.cc_c().val.simplify() != b.cc_c().val.simplify());
+    compare_result_type cc_c = compare_from_check_result(solver.check());
+    solver.pop();
+    solver.push();
+    solver.add(a.cc_z().val.simplify() != b.cc_z().val.simplify());
+    compare_result_type cc_z = compare_from_check_result(solver.check());
+    return compare_result(cc_s, cc_v, cc_i, cc_d, cc_c, cc_z);
+  } else {
+    return compare_result_type::unknown;
+  }
 }
 
 int nes_test(char *rom) {
@@ -1533,20 +2222,187 @@ int nes_test(char *rom) {
   return 0;
 }
 
+instruction comparisons[] = {
+  // COMPARE:
+  // LDA #immediate1
+  // AND #immediate2
+  //
+  // LDA #(immediate1 & immediate2)
+  instruction(instruction_name::LDA, instruction_payload_type::IMMEDIATE, 0),
+  instruction(instruction_name::AND, instruction_payload_type::IMMEDIATE, 1),
+  instruction(instruction_name::NONE, instruction_payload_type::NONE, 0),
+
+  instruction(instruction_name::LDA, instruction_payload_type::SPECIAL_IMMEDIATE, special_immediate{
+    .operation = special_immediate_operations::AND,
+    .operand1 = special_immediate_operands::IMMEDIATE,
+    .payload1 = 0,
+    .operand2 = special_immediate_operands::IMMEDIATE,
+    .payload2 = 1
+  }.to_int()),
+  instruction(instruction_name::NONE, instruction_payload_type::NONE, 0),
+
+  // COMPARE
+  // lda #0
+  // jmp absolute0
+  //
+  // lda #>(absolute0-1)
+  // pha
+  // lda #<(absolute0-1)
+  // pha
+  // lda #0
+  // rts
+  instruction(instruction_name::LDA, instruction_payload_type::IMMEDIATE_CONST, 0),
+  instruction(instruction_name::JMP, instruction_payload_type::ABSOLUTE, 0),
+  instruction(instruction_name::NONE, instruction_payload_type::NONE, 0),
+
+  instruction(instruction_name::LDA, instruction_payload_type::SPECIAL_IMMEDIATE, special_immediate {
+    .operation = special_immediate_operations::MINUS_HI,
+    .operand1 = special_immediate_operands::ABSOLUTE,
+    .payload1 = 0,
+    .operand2 = special_immediate_operands::CONSTANT,
+    .payload2 = special_immediate_constants::x1
+  }.to_int()),
+  instruction(instruction_name::PHA, instruction_payload_type::NONE, 0),
+  instruction(instruction_name::LDA, instruction_payload_type::SPECIAL_IMMEDIATE, special_immediate {
+    .operation = special_immediate_operations::MINUS,
+    .operand1 = special_immediate_operands::ABSOLUTE,
+    .payload1 = 0,
+    .operand2 = special_immediate_operands::CONSTANT,
+    .payload2 = special_immediate_constants::x1
+  }.to_int()),
+  instruction(instruction_name::PHA, instruction_payload_type::NONE, 0),
+  instruction(instruction_name::LDA, instruction_payload_type::IMMEDIATE_CONST, 0),
+  instruction(instruction_name::RTS, instruction_payload_type::NONE, 0),
+  instruction(instruction_name::NONE, instruction_payload_type::NONE, 0),
+
+  // COMPARE
+  // clc
+  //
+  // nop
+  //
+  // This tests the detection of equivalence except flags
+  instruction(instruction_name::CLC, instruction_payload_type::NONE, 0),
+  instruction(instruction_name::NONE, instruction_payload_type::NONE, 0),
+
+  instruction(instruction_name::NOP, instruction_payload_type::NONE, 0),
+  instruction(instruction_name::NONE, instruction_payload_type::NONE, 0),
+
+  // COMPARE
+  // sta TEMP + offset0
+  // inc TEMP + offset0
+  // lda TEMP + offset0
+  //
+  // inc a
+  // This tests equivalence ignoring TEMP stores.
+  instruction(instruction_name::STA, instruction_payload_type::ZERO_PAGE_TEMP, 0),
+  instruction(instruction_name::INC, instruction_payload_type::RMW_ZERO_PAGE_TEMP, 0),
+  instruction(instruction_name::LDA, instruction_payload_type::ZERO_PAGE_TEMP, 0),
+  instruction(instruction_name::NONE, instruction_payload_type::NONE, 0),
+
+  instruction(instruction_name::INC, instruction_payload_type::NONE, 0),
+  instruction(instruction_name::NONE, instruction_payload_type::NONE, 0),
+
+  // COMPARE
+  // bit zp0
+  // php
+  // pha
+  // eor #$FF
+  // and zp0
+  // sta zp0
+  // pla
+  // plp
+  //
+  // trb zp0
+  // This should be equivalent except for the S and V flags.
+  instruction(instruction_name::BIT, instruction_payload_type::ZERO_PAGE, 0),
+  instruction(instruction_name::PHP, instruction_payload_type::NONE, 0),
+  instruction(instruction_name::PHA, instruction_payload_type::NONE, 0),
+  instruction(instruction_name::EOR, instruction_payload_type::IMMEDIATE_CONST, 0xFF),
+  instruction(instruction_name::AND, instruction_payload_type::ZERO_PAGE, 0),
+  instruction(instruction_name::STA, instruction_payload_type::ZERO_PAGE, 0),
+  instruction(instruction_name::PLA, instruction_payload_type::NONE, 0),
+  instruction(instruction_name::PLP, instruction_payload_type::NONE, 0),
+  instruction(instruction_name::NONE, instruction_payload_type::NONE, 0),
+
+  instruction(instruction_name::TRB, instruction_payload_type::ZERO_PAGE, 0),
+  instruction(instruction_name::NONE, instruction_payload_type::NONE, 0),
+
+  // COMPARE
+  // clv
+  // bvc relative0
+  //
+  // bra relative0
+  // This is equivalent, other than the overflow flag.
+  // However, this isn't detected now, since it assumes the relative0
+  // is a fixed offset from the current instruction, and the instructions
+  // are at different locations. TODO, fix the handling of relative branches.
+  // Adding a NOP to make this work for now.
+  instruction(instruction_name::CLV, instruction_payload_type::NONE, 0),
+  instruction(instruction_name::BVC, instruction_payload_type::RELATIVE, 0),
+  instruction(instruction_name::NONE, instruction_payload_type::NONE, 0),
+
+  instruction(instruction_name::NOP, instruction_payload_type::NONE, 0),
+  instruction(instruction_name::BRA, instruction_payload_type::RELATIVE, 0),
+  instruction(instruction_name::NONE, instruction_payload_type::NONE, 0),
+
+  // COMPARE
+  // lda zp0
+  // ldx zp0
+  //
+  // lax zp0
+  instruction(instruction_name::LDA, instruction_payload_type::ZERO_PAGE, 0),
+  instruction(instruction_name::LDX, instruction_payload_type::ZERO_PAGE, 0),
+  instruction(instruction_name::NONE, instruction_payload_type::NONE, 0),
+
+  instruction(instruction_name::LAX, instruction_payload_type::ZERO_PAGE, 0),
+  instruction(instruction_name::NONE, instruction_payload_type::NONE, 0),
+
+  // signal the end of the sequences to test.
+  instruction(instruction_name::UNKNOWN, instruction_payload_type::NONE, 0),
+};
+
+int test_compare() {
+  int i = 0;
+  while (comparisons[i].name != instruction_name::UNKNOWN) {
+    std::cout << "COMPARING:" << std::endl;
+    z_initial_state z_state;
+    zmachine a(z_state);
+    zmachine b(z_state);
+
+    while (comparisons[i++].name != instruction_name::NONE) {
+      zuint16_t cycles = a.cycles();
+      a.run(comparisons[i-1]);
+      std::cout << "  "
+        << instruction_to_string(comparisons[i-1])
+        << " {" << usage_flags_to_string(a._uses)
+        << " -> " << usage_flags_to_string(a._affects)
+        << "}"
+        << "{" << (a.cycles() - cycles).val.simplify() << " cycles}"
+        << std::endl;
+      a._uses = usage_flags::NONE;
+      a._affects = usage_flags::NONE;
+    }
+    std::cout << "WITH:" << std::endl;
+
+    while (comparisons[i++].name != instruction_name::NONE) {
+      b.run(comparisons[i-1]);
+      std::cout << "  "
+        << instruction_to_string(comparisons[i-1])
+        << " {" << usage_flags_to_string(b._uses)
+        << " -> " << usage_flags_to_string(b._affects)
+        << "}"
+        << "{" << b.cycles().val.simplify() << " cycles}"
+        << std::endl;
+      b._uses = usage_flags::NONE;
+      b._affects = usage_flags::NONE;
+    }
+
+    std::cout << compare(a, b) << std::endl << std::endl;
+  }
+  return 0;
+}
+
 int main(int argc, char **argv) {
-  instruction ins(instruction_name::INX, instruction_payload_type::NONE, 0);
-  z_initial_state z_state;
-  zmachine z(z_state);
-  z.run(ins);
-  hash_initial_state h_state(1234);
-  hmachine h(h_state);
-  h.run(ins);
-
-  uint8_t memory[65536];
-  concrete_initial_state c_state(memory);
-  cmachine c(c_state);
-  c.run(ins);
-
   if (argv[1] == std::string("test")) {
     return compare_abstract_and_concrete(argv[2]);
   } else if (argv[1] == std::string("nestest")) {
@@ -1555,5 +2411,7 @@ int main(int argc, char **argv) {
     return initialize();
   } else if (argv[1] == std::string("enumerate")) {
     return enumerate();
+  } else if (argv[1] == std::string("compare")) {
+    return test_compare();
   }
 }

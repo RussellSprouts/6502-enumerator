@@ -5,6 +5,7 @@
 
 #include <assert.h>
 #include "stdint.h"
+#include "config.h"
 
 struct cmemory;
 struct hmemory;

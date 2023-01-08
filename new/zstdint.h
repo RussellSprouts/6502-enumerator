@@ -13,6 +13,7 @@ struct zbool {
     zbool(z3::expr _val);
     zbool(bool _val);
     zbool operator==(const zbool& other);
+    zbool operator!=(const zbool& other);
     zbool operator&&(const zbool& other);
     zbool operator||(const zbool& other);
     zbool operator^(const zbool& other);
@@ -61,6 +62,9 @@ zbool::zbool(const z3::expr _val): val(_val) {
 zbool::zbool(bool _val): val(z3_ctx.bool_val(_val)) {}
 zbool zbool::operator==(const zbool& other) {
     return val == other.val;
+}
+zbool zbool::operator!=(const zbool& other) {
+    return val != other.val;
 }
 zbool zbool::operator&&(const zbool& other) {
     return val && other.val;
